@@ -1,4 +1,4 @@
-"""Shared fixtures: a real GraphQL response recorded from GitHub.
+"""Shared fixtures: a recorded GitHub response, a fake GitHub, CLI helpers.
 
 ``fixtures/issues_response.json`` is the body GitHub returned for
 ``ISSUES_QUERY`` on vorssaint/vorssaint-utils with limit 3 and comments 3,
@@ -9,10 +9,12 @@ token.
 import copy
 import json
 import pathlib
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 
+from gh_triage import cli
 from gh_triage import github_api
 from gh_triage import repo_ref
 
@@ -53,3 +55,60 @@ def fake_github(
     monkeypatch.setattr(github_api, "load_token", lambda: "test-token")
     monkeypatch.setattr(github_api, "fetch_open_issues", fetch)
     return requested
+
+
+@pytest.fixture
+def cache_file(tmp_path: pathlib.Path) -> pathlib.Path:
+    """Returns where ``add`` stores the fixture repo under ``tmp_path``."""
+    return tmp_path / "vorssaint__vorssaint-utils.db"
+
+
+@pytest.fixture
+def triage(tmp_path: pathlib.Path) -> Callable[..., int]:
+    """Returns a function that runs the CLI with its cache in tmp_path."""
+
+    def run(*args: str) -> int:
+        return cli.main(["--data-dir", str(tmp_path), *args])
+
+    return run
+
+
+@pytest.fixture
+def tracked(
+    triage: Callable[..., int],
+    cache_file: pathlib.Path,
+    fake_github: list[repo_ref.RepoRef],
+    capsys: pytest.CaptureFixture[str],
+) -> pathlib.Path:
+    """Tracks the fixture repo, clears its output, returns its cache file."""
+    assert triage("add", "vorssaint/vorssaint-utils") == 0
+    capsys.readouterr()
+    return cache_file
+
+
+class _FakeStdin:
+    """Stands in for sys.stdin: a chosen answer, on or off a terminal."""
+
+    def __init__(self, answer: str, is_terminal: bool) -> None:
+        self._answer = answer
+        self._is_terminal = is_terminal
+
+    def isatty(self) -> bool:
+        return self._is_terminal
+
+    def readline(self) -> str:
+        return self._answer
+
+
+@pytest.fixture
+def answer_prompt(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
+    """Returns a function that fakes what the user types at a [y/N] prompt.
+
+    ``answer_prompt("y\\n")`` answers yes; ``answer_prompt(terminal=False)``
+    simulates running from a script, where nobody can answer.
+    """
+
+    def answer(text: str = "", *, terminal: bool = True) -> None:
+        monkeypatch.setattr("sys.stdin", _FakeStdin(text, terminal))
+
+    return answer

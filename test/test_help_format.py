@@ -116,3 +116,22 @@ def test_flags_show_their_placeholder_once_and_line_up(
     assert yes.startswith("  -y, --yes ")
     assert data_dir.startswith("      --data-dir <path> ")
     assert yes.index("--yes") == data_dir.index("--data-dir")
+
+
+def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main([]) == 2
+    assert capsys.readouterr().out.startswith("Track GitHub repositories")
+
+
+def test_usage_errors_point_to_help(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["add"])
+
+    assert exit_info.value.code == 2
+    assert capsys.readouterr().err.splitlines() == [
+        "Error: the following arguments are required: <repo>",
+        "Usage: triage add [options] <repo>",
+        "Run 'triage add --help' for more information.",
+    ]

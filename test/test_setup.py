@@ -1,6 +1,7 @@
 """Tests for `triage setup` and `triage completion install`."""
 
 import pathlib
+from collections.abc import Callable
 
 import pytest
 
@@ -9,20 +10,6 @@ from gh_triage import completion
 from gh_triage import github_api
 
 ZSH_LINES = '# triage: Tab completion\neval "$(triage completion zsh)"\n'
-
-
-class _FakeStdin:
-    """A stand-in for sys.stdin with a chosen answer."""
-
-    def __init__(self, answer: str, is_terminal: bool = True) -> None:
-        self._answer = answer
-        self._is_terminal = is_terminal
-
-    def isatty(self) -> bool:
-        return self._is_terminal
-
-    def readline(self) -> str:
-        return self._answer
 
 
 @pytest.fixture
@@ -140,10 +127,10 @@ def test_completion_install_named_shell_and_file(
 
 def test_completion_install_asks_first(
     zshrc: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
+    answer_prompt: Callable[..., None],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr("sys.stdin", _FakeStdin("n\n"))
+    answer_prompt("n\n")
 
     assert cli.main(["completion", "install"]) == 0
 
@@ -155,10 +142,10 @@ def test_completion_install_asks_first(
 
 def test_completion_install_without_terminal_needs_yes(
     zshrc: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
+    answer_prompt: Callable[..., None],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    monkeypatch.setattr("sys.stdin", _FakeStdin("y\n", is_terminal=False))
+    answer_prompt("y\n", terminal=False)
 
     assert cli.main(["completion", "install"]) == 1
 
@@ -224,10 +211,10 @@ def test_setup_again_skips_finished_steps(
 @pytest.mark.usefixtures("good_token")
 def test_setup_no_leaves_completion_for_later(
     zshrc: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
+    answer_prompt: Callable[..., None],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr("sys.stdin", _FakeStdin("n\n"))
+    answer_prompt("n\n")
 
     assert cli.main(["setup"]) == 0
 
@@ -240,10 +227,10 @@ def test_setup_no_leaves_completion_for_later(
 @pytest.mark.usefixtures("good_token")
 def test_setup_without_terminal_skips_completion(
     zshrc: pathlib.Path,
-    monkeypatch: pytest.MonkeyPatch,
+    answer_prompt: Callable[..., None],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr("sys.stdin", _FakeStdin("", is_terminal=False))
+    answer_prompt("", terminal=False)
 
     assert cli.main(["setup"]) == 0
 
