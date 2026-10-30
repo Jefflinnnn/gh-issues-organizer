@@ -8,8 +8,8 @@ from collections.abc import Callable
 
 import pytest
 
-from gh_triage import cli
-from gh_triage import completion
+from triage_cli import cli
+from triage_cli import completion
 
 TRACKED = ["BaranziniLab/biorouter", "vorssaint/vorssaint-utils"]
 

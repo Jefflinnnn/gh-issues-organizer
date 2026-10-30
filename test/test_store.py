@@ -4,8 +4,8 @@ import sqlite3
 
 import pytest
 
-from gh_triage import github_api
-from gh_triage import store
+from issue_store import github_api
+from issue_store import store
 
 
 @pytest.fixture

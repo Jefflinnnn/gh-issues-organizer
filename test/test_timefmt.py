@@ -6,7 +6,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from gh_triage import timefmt
+from triage_cli import timefmt
 
 pytestmark = pytest.mark.skipif(
     not hasattr(time, "tzset"), reason="needs time.tzset to switch zones"

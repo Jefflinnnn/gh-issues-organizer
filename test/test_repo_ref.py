@@ -1,6 +1,6 @@
 import pytest
 
-from gh_triage import repo_ref
+from issue_store import repo_ref
 
 
 @pytest.mark.parametrize(

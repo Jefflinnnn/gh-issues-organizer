@@ -5,9 +5,9 @@ from collections.abc import Callable
 
 import pytest
 
-from gh_triage import cli
-from gh_triage import completion
-from gh_triage import github_api
+from issue_store import github_api
+from triage_cli import cli
+from triage_cli import completion
 
 ZSH_LINES = '# triage: Tab completion\neval "$(triage completion zsh)"\n'
 
