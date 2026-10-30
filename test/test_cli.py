@@ -146,14 +146,14 @@ def test_data_dir_after_the_command_is_used(tmp_path: pathlib.Path) -> None:
 def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main([]) == 2
     output = capsys.readouterr().out
-    assert "usage: triage" in output
+    assert "Usage:\n  triage [options] <command>" in output
     assert "triage add https://github.com/" in output
 
 
 @pytest.mark.parametrize(
     ("args", "expected"),
     [
-        (["-h"], "examples:"),
+        (["-h"], "Examples:"),
         (["add", "-h"], "git@github.com:"),
         (["list", "-h"], "triage list"),
     ],
@@ -175,7 +175,12 @@ def test_missing_repo_points_to_examples(
         cli.main(["add"])
 
     assert exit_info.value.code == 2
-    assert "Run 'triage add -h' for examples." in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert err.splitlines() == [
+        "Error: the following arguments are required: <repo>",
+        "Usage: triage add [options] <repo>",
+        "Run 'triage add --help' for more information.",
+    ]
 
 
 class _FakeStdin:

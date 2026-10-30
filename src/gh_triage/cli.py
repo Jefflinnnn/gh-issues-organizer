@@ -5,11 +5,12 @@ import logging
 import pathlib
 import sqlite3
 import sys
+from collections.abc import Callable
 from collections.abc import Sequence
-from typing import NoReturn
 
 from gh_triage import completion
 from gh_triage import github_api
+from gh_triage import help_format
 from gh_triage import repo_ref
 from gh_triage import store
 
@@ -26,23 +27,6 @@ _USER_ERRORS = (
     store.StoreError,
     sqlite3.DatabaseError,
 )
-
-
-class _Parser(argparse.ArgumentParser):
-    """An ArgumentParser whose usage errors point to the examples."""
-
-    def error(self, message: str) -> NoReturn:
-        """Prints the usage line, the error and where to find examples.
-
-        Args:
-            message: argparse's description of what was wrong.
-        """
-        self.print_usage(sys.stderr)
-        self.exit(
-            2,
-            f"{self.prog}: error: {message}\n"
-            f"Run '{self.prog} -h' for examples.\n",
-        )
 
 
 class AlreadyTrackedError(RuntimeError):
@@ -65,54 +49,55 @@ _COMMAND_ERRORS = (
 )
 
 
-_MAIN_EXAMPLES = """\
-examples:
+_MAIN_EPILOG = """\
+Examples:
   triage add https://github.com/vorssaint/vorssaint-utils
   triage add vorssaint/vorssaint-utils --limit 25
   triage list
   triage remove vorssaint/vorssaint-utils
-  triage add -v vorssaint/vorssaint-utils    (show debug logs)
-
-Tab completion: add eval "$(triage completion zsh)" to ~/.zshrc
-(or "bash" to ~/.bashrc).
 
 Run triage from the project folder: it reads .env and .cache/ there.
-Run 'triage COMMAND -h' for a command's options.
+Set up Tab completion with "triage completion --help".
+
+Use "triage <command> --help" for more information about a command.
 """
 
-_ADD_EXAMPLES = """\
-REPO can be any of:
+_ADD_EPILOG = """\
+Repository formats:
   https://github.com/vorssaint/vorssaint-utils
   https://github.com/vorssaint/vorssaint-utils/issues
   git@github.com:vorssaint/vorssaint-utils.git
   vorssaint/vorssaint-utils
 
-examples:
+Examples:
   triage add https://github.com/vorssaint/vorssaint-utils
   triage add vorssaint/vorssaint-utils --limit 25 --comments 5
 """
 
-_LIST_EXAMPLES = """\
-examples:
+_LIST_EPILOG = """\
+Examples:
   triage list
-  triage list --names    (one repo per line, for scripts)
+  triage list --names    # one repository per line, for scripts
 """
 
-_COMPLETION_EXAMPLES = """\
-Add one line to your shell's startup file, then open a new terminal:
-  zsh  (~/.zshrc):   eval "$(triage completion zsh)"
-  bash (~/.bashrc):  eval "$(triage completion bash)"
-
-Then press Tab after "triage " for commands, or after "triage remove "
-for the repositories tracked in the current folder.
-"""
-
-_REMOVE_EXAMPLES = """\
-Deletes the repository's cache file. To track it again, run triage add.
-
-examples:
+_REMOVE_EPILOG = """\
+Examples:
   triage remove vorssaint/vorssaint-utils
   triage remove https://github.com/vorssaint/vorssaint-utils --yes
+"""
+
+_COMPLETION_EPILOG = """\
+Setup:
+  Add one line to your shell's startup file, then open a new terminal.
+
+  zsh (~/.zshrc):
+    eval "$(triage completion zsh)"
+
+  bash (~/.bashrc):
+    eval "$(triage completion bash)"
+
+Press Tab after "triage " to complete a command, or after "triage remove "
+to complete a repository tracked in the current folder.
 """
 
 
@@ -146,128 +131,163 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _shared_options(*, suppress_defaults: bool) -> _Parser:
-    """Returns a parent parser with the options every command accepts.
+def _add_global_options(
+    add_argument: Callable[..., argparse.Action], *, suppress_defaults: bool
+) -> None:
+    """Adds the options every command accepts.
 
-    The options are added both before and after the command name, so
+    They're added to the top-level parser and again to each command, so
     ``triage -v add ...`` and ``triage add -v ...`` both work.
 
     Args:
-        suppress_defaults: True for the copy attached to each command, so
-            an option left out after the command doesn't overwrite the
-            value given before it.
-
-    Returns:
-        A parser to pass as ``parents=[...]``.
+        add_argument: The ``add_argument`` method of a parser or group.
+        suppress_defaults: True for the copy on each command, so an option
+            left out after the command doesn't overwrite the value given
+            before it.
     """
-    shared = _Parser(add_help=False)
-    group = shared.add_argument_group("shared options")
-    group.add_argument(
+    add_argument(
         "-v",
         "--verbose",
         action="store_true",
         default=argparse.SUPPRESS if suppress_defaults else False,
-        help="show debug logs on stderr",
+        help="Show debug logs on stderr",
     )
-    group.add_argument(
+    add_argument(
         "--data-dir",
         type=pathlib.Path,
-        metavar="PATH",
+        metavar="<path>",
         default=argparse.SUPPRESS if suppress_defaults else DEFAULT_DATA_DIR,
-        help="folder with one cache file per repo "
+        help="Folder with one cache file per repo "
         f"(default: {DEFAULT_DATA_DIR})",
     )
-    return shared
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _add_command(
+    commands: "argparse._SubParsersAction[help_format.Parser]",
+    name: str,
+    *,
+    summary: str,
+    usage: str,
+    description: str,
+    epilog: str,
+) -> help_format.Parser:
+    """Adds one command with the shared help layout and global options.
+
+    Args:
+        commands: The subparsers action of the top-level parser.
+        name: The command name, e.g. ``"add"``.
+        summary: One line shown in the top-level command list.
+        usage: The usage line, e.g. ``"%(prog)s [options] <repo>"``.
+        description: The paragraph at the top of the command's help.
+        epilog: Text after the options, usually examples.
+
+    Returns:
+        The command's parser.
+    """
+    command = commands.add_parser(
+        name,
+        # Without prog, argparse prefixes the top-level usage line.
+        prog=f"triage {name}",
+        help=summary,
+        usage=usage,
+        description=description,
+        epilog=epilog,
+    )
+    global_options = command.add_argument_group("Global Options")
+    _add_global_options(global_options.add_argument, suppress_defaults=True)
+    return command
+
+
+def _build_parser() -> help_format.Parser:
     """Defines the commands and their flags."""
-    formatter = argparse.RawDescriptionHelpFormatter
-    command_options = _shared_options(suppress_defaults=True)
-    parser = _Parser(
+    parser = help_format.Parser(
         prog="triage",
+        usage="%(prog)s [options] <command> [<args>]",
         description="Track GitHub repositories and store their open issues "
         "locally for triage.",
-        epilog=_MAIN_EXAMPLES,
-        formatter_class=formatter,
-        parents=[_shared_options(suppress_defaults=False)],
+        epilog=_MAIN_EPILOG,
     )
+    _add_global_options(parser.add_argument, suppress_defaults=False)
     commands = parser.add_subparsers(
-        title="commands", dest="command", metavar="COMMAND"
+        title="Commands", dest="command", metavar="<command>"
     )
 
-    add = commands.add_parser(
+    add = _add_command(
+        commands,
         "add",
-        help="track a repository and fetch its open issues",
+        summary="Track a repository and fetch its open issues",
+        usage="%(prog)s [options] <repo>",
         description="Track a repository: fetch its most recently updated "
-        "open issues into .cache/<owner>__<name>.db.",
-        epilog=_ADD_EXAMPLES,
-        formatter_class=formatter,
-        parents=[command_options],
+        "open issues\ninto .cache/<owner>__<name>.db.",
+        epilog=_ADD_EPILOG,
     )
     add.add_argument(
         "repo",
-        metavar="REPO",
-        help="GitHub link or owner/name (forms listed below)",
+        metavar="<repo>",
+        help="GitHub link or owner/name (formats below)",
     )
     add.add_argument(
         "--limit",
         type=int,
-        metavar="N",
+        metavar="<n>",
         default=DEFAULT_LIMIT,
-        help="open issues to fetch, 1-100 (default: %(default)s)",
+        help="Open issues to fetch, 1-100 (default: %(default)s)",
     )
     add.add_argument(
         "--comments",
         type=int,
-        metavar="N",
+        metavar="<n>",
         default=DEFAULT_COMMENTS,
-        help="latest comments to keep per issue (default: %(default)s)",
+        help="Latest comments to keep per issue (default: %(default)s)",
     )
     add.set_defaults(handler=_run_add)
 
-    list_command = commands.add_parser(
+    list_command = _add_command(
+        commands,
         "list",
-        help="show tracked repositories",
+        summary="Show tracked repositories",
+        usage="%(prog)s [options]",
         description="Show each tracked repository, how many issues are "
-        "stored, and when it was last synced.",
-        epilog=_LIST_EXAMPLES,
-        formatter_class=formatter,
-        parents=[command_options],
+        "stored, and when it\nwas last synced.",
+        epilog=_LIST_EPILOG,
     )
     list_command.add_argument(
         "--names",
         action="store_true",
-        help="print only repository names, one per line",
+        help="Print only repository names, one per line",
     )
     list_command.set_defaults(handler=_run_list)
 
-    remove = commands.add_parser(
+    remove = _add_command(
+        commands,
         "remove",
-        help="stop tracking a repository and delete its data",
-        description="Stop tracking a repository and delete its cache file.",
-        epilog=_REMOVE_EXAMPLES,
-        formatter_class=formatter,
-        parents=[command_options],
+        summary="Stop tracking a repository and delete its data",
+        usage="%(prog)s [options] <repo>",
+        description="Stop tracking a repository and delete its cache file. "
+        "To track it again,\nrun triage add.",
+        epilog=_REMOVE_EPILOG,
     )
     remove.add_argument(
-        "repo", metavar="REPO", help="GitHub link or owner/name"
+        "repo", metavar="<repo>", help="GitHub link or owner/name"
     )
     remove.add_argument(
-        "-y", "--yes", action="store_true", help="skip the confirmation"
+        "-y", "--yes", action="store_true", help="Delete without asking"
     )
     remove.set_defaults(handler=_run_remove)
 
-    completion_command = commands.add_parser(
+    completion_command = _add_command(
+        commands,
         "completion",
-        help="print a shell completion script",
+        summary="Print a shell completion script",
+        usage="%(prog)s [options] <shell>",
         description="Print a script that adds Tab completion to your shell.",
-        epilog=_COMPLETION_EXAMPLES,
-        formatter_class=formatter,
-        parents=[command_options],
+        epilog=_COMPLETION_EPILOG,
     )
     completion_command.add_argument(
-        "shell", choices=sorted(completion.SCRIPTS), help="your shell"
+        "shell",
+        metavar="<shell>",
+        choices=sorted(completion.SCRIPTS),
+        help="bash or zsh",
     )
     completion_command.set_defaults(handler=_run_completion)
     return parser
