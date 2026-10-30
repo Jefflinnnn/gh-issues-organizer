@@ -8,6 +8,7 @@ import sys
 from collections.abc import Sequence
 from typing import NoReturn
 
+from gh_triage import completion
 from gh_triage import github_api
 from gh_triage import repo_ref
 from gh_triage import store
@@ -72,6 +73,9 @@ examples:
   triage remove vorssaint/vorssaint-utils
   triage add -v vorssaint/vorssaint-utils    (show debug logs)
 
+Tab completion: add eval "$(triage completion zsh)" to ~/.zshrc
+(or "bash" to ~/.bashrc).
+
 Run triage from the project folder: it reads .env and .cache/ there.
 Run 'triage COMMAND -h' for a command's options.
 """
@@ -89,8 +93,18 @@ examples:
 """
 
 _LIST_EXAMPLES = """\
-example:
+examples:
   triage list
+  triage list --names    (one repo per line, for scripts)
+"""
+
+_COMPLETION_EXAMPLES = """\
+Add one line to your shell's startup file, then open a new terminal:
+  zsh  (~/.zshrc):   eval "$(triage completion zsh)"
+  bash (~/.bashrc):  eval "$(triage completion bash)"
+
+Then press Tab after "triage " for commands, or after "triage remove "
+for the repositories tracked in the current folder.
 """
 
 _REMOVE_EXAMPLES = """\
@@ -221,6 +235,11 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=formatter,
         parents=[command_options],
     )
+    list_command.add_argument(
+        "--names",
+        action="store_true",
+        help="print only repository names, one per line",
+    )
     list_command.set_defaults(handler=_run_list)
 
     remove = commands.add_parser(
@@ -238,6 +257,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "-y", "--yes", action="store_true", help="skip the confirmation"
     )
     remove.set_defaults(handler=_run_remove)
+
+    completion_command = commands.add_parser(
+        "completion",
+        help="print a shell completion script",
+        description="Print a script that adds Tab completion to your shell.",
+        epilog=_COMPLETION_EXAMPLES,
+        formatter_class=formatter,
+        parents=[command_options],
+    )
+    completion_command.add_argument(
+        "shell", choices=sorted(completion.SCRIPTS), help="your shell"
+    )
+    completion_command.set_defaults(handler=_run_completion)
     return parser
 
 
@@ -299,6 +331,9 @@ def _run_list(args: argparse.Namespace) -> None:
     """Prints every tracked repository and when it was last synced."""
     data_dir: pathlib.Path = args.data_dir
     paths = sorted(data_dir.glob("*.db")) if data_dir.is_dir() else []
+    if args.names:
+        _print_names(paths)
+        return
     if not paths:
         print("No tracked repositories. Add one with: triage add <github link>")
         return
@@ -374,3 +409,21 @@ def _confirm(question: str) -> bool:
     sys.stderr.write(question)
     sys.stderr.flush()
     return sys.stdin.readline().strip().lower() in ("y", "yes")
+
+
+def _print_names(paths: list[pathlib.Path]) -> None:
+    """Prints each tracked repository's name, skipping unreadable files.
+
+    Shell completion calls this on every Tab, so one broken file shouldn't
+    hide the other repositories.
+    """
+    for path in paths:
+        try:
+            print(store.summarize(path).name_with_owner)
+        except (store.StoreError, sqlite3.DatabaseError):
+            logger.warning("Skipping unreadable cache file %s", path)
+
+
+def _run_completion(args: argparse.Namespace) -> None:
+    """Prints the completion script for the requested shell."""
+    print(completion.SCRIPTS[args.shell], end="")

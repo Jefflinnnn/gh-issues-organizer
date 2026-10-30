@@ -35,3 +35,21 @@ def issues_payload() -> dict[str, Any]:
 def fetch_result(issues_payload: dict[str, Any]) -> github_api.FetchResult:
     """Returns the recorded response parsed into a FetchResult."""
     return github_api.parse_issues_response(issues_payload, FIXTURE_REPO)
+
+
+@pytest.fixture
+def fake_github(
+    monkeypatch: pytest.MonkeyPatch, fetch_result: github_api.FetchResult
+) -> list[repo_ref.RepoRef]:
+    """Serves the recorded fetch and records which repos were requested."""
+    requested: list[repo_ref.RepoRef] = []
+
+    def fetch(
+        repo: repo_ref.RepoRef, limit: int, comments: int, token: str
+    ) -> github_api.FetchResult:
+        requested.append(repo)
+        return fetch_result
+
+    monkeypatch.setattr(github_api, "load_token", lambda: "test-token")
+    monkeypatch.setattr(github_api, "fetch_open_issues", fetch)
+    return requested

@@ -12,24 +12,6 @@ from gh_triage import repo_ref
 DB_NAME = "vorssaint__vorssaint-utils.db"
 
 
-@pytest.fixture
-def fake_github(
-    monkeypatch: pytest.MonkeyPatch, fetch_result: github_api.FetchResult
-) -> list[repo_ref.RepoRef]:
-    """Serves the recorded fetch and records which repos were requested."""
-    requested: list[repo_ref.RepoRef] = []
-
-    def fetch(
-        repo: repo_ref.RepoRef, limit: int, comments: int, token: str
-    ) -> github_api.FetchResult:
-        requested.append(repo)
-        return fetch_result
-
-    monkeypatch.setattr(github_api, "load_token", lambda: "test-token")
-    monkeypatch.setattr(github_api, "fetch_open_issues", fetch)
-    return requested
-
-
 def _run(data_dir: pathlib.Path, *args: str) -> int:
     return cli.main(["--data-dir", str(data_dir), *args])
 
