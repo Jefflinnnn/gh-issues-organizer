@@ -81,8 +81,8 @@ confirmation first; `--yes` skips the question. To track it again, run
 triage remove vorssaint/vorssaint-utils
 ```
 
-Run `triage -h`, `triage add -h` or `triage list -h` for options and
-examples. Shared options such as `-v` work before or after the command
+Run `triage --help` for the command list, and `triage <command> --help`
+(or `-h`) for a command's arguments, options and examples. Shared options such as `-v` work before or after the command
 (`triage -v add ...` or `triage add -v ...`).
 
 Options:
