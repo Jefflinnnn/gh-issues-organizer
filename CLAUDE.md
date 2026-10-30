@@ -51,9 +51,20 @@ House style: **Python 3.10+** and the
      (e.g. `feat/fetch-issues`, `fix/rate-limit-retry`, `docs/readme-setup`).
   2. Make small, focused commits on the branch.
   3. Run the local checks (see below) before pushing.
-  4. Push the branch and open a PR against `main` with `gh pr create`.
-     The PR description says what changed, why, and how it was tested.
+  4. Push the branch and open a PR against `main`. The PR body **must**
+     follow `.github/pull_request_template.md`: copy it, fill in every
+     section (delete options that don't apply), and pass it with
+     `gh pr create --base main --title "<conventional title>" --body-file <file>`.
+     `--fill` skips the template, so don't use it. In "AI assistance", list
+     what you did and leave "Changed or overrode" and "Verified by hand"
+     for the human to fill in unless they've told you.
   5. **Do not merge PRs.** The human reviews and merges after CI passes.
+  6. After the human merges, clean up locally. GitHub deletes the remote
+     branch automatically ("Automatically delete head branches" is on).
+     Confirm the PR is merged with `gh pr view <branch> --json state`, then:
+     `git switch main && git pull --prune && git branch -D <branch>`.
+     (`-D` is needed because squash merges rewrite commits; only use it
+     after confirming the PR state is `MERGED`.)
 - One logical change per PR. Keep PRs small enough to review in one sitting.
 
 ## Commit messages
