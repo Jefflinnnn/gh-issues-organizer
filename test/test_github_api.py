@@ -96,5 +96,23 @@ def test_load_token_explains_missing_token(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-    with pytest.raises(github_api.GitHubError, match=".env.example"):
+    with pytest.raises(github_api.GitHubError, match="triage setup"):
         github_api.load_token(tmp_path / ".env")
+
+
+def test_parse_viewer_response() -> None:
+    payload = {
+        "data": {
+            "viewer": {"login": "octocat"},
+            "rateLimit": {"limit": 5000, "remaining": 4990},
+        }
+    }
+    assert github_api.parse_viewer_response(payload) == github_api.TokenStatus(
+        login="octocat", limit=5000, remaining=4990
+    )
+
+
+def test_parse_viewer_response_reports_errors() -> None:
+    payload = {"errors": [{"message": "Bad credentials"}]}
+    with pytest.raises(github_api.GitHubError, match="Bad credentials"):
+        github_api.parse_viewer_response(payload)

@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import os
 import pathlib
 import sqlite3
 import sys
@@ -41,15 +42,22 @@ class ConfirmationRequiredError(RuntimeError):
     """Raised when a destructive command can't ask for confirmation."""
 
 
+class SetupError(RuntimeError):
+    """Raised when setup can't finish or a setup command is misused."""
+
+
 _COMMAND_ERRORS = (
     *_USER_ERRORS,
     AlreadyTrackedError,
     NotTrackedError,
     ConfirmationRequiredError,
+    SetupError,
 )
 
 
 _MAIN_EPILOG = """\
+New here? Run "triage setup" first.
+
 Examples:
   triage add https://github.com/vorssaint/vorssaint-utils
   triage add vorssaint/vorssaint-utils --limit 25
@@ -88,16 +96,34 @@ Examples:
 
 _COMPLETION_EPILOG = """\
 Setup:
-  Add one line to your shell's startup file, then open a new terminal.
+  triage completion install adds these lines to ~/.zshrc (or ~/.bashrc),
+  after asking:
 
-  zsh (~/.zshrc):
+    # triage: Tab completion
     eval "$(triage completion zsh)"
 
-  bash (~/.bashrc):
-    eval "$(triage completion bash)"
+  Or add them yourself. Open a new terminal afterwards.
 
 Press Tab after "triage " to complete a command, or after "triage remove "
 to complete a repository tracked in the current folder.
+
+Examples:
+  triage completion install
+  triage completion install bash --yes
+  triage completion zsh    # print the script
+"""
+
+_SETUP_EPILOG = """\
+Steps:
+  1. GitHub token: checks .env has GITHUB_TOKEN and that GitHub accepts it.
+  2. Tab completion: offers to add two lines to your shell's startup file.
+     Say no and turn it on later with: triage completion install
+
+Running setup again is safe: finished steps are skipped.
+
+Examples:
+  triage setup
+  triage setup --yes    # turn on Tab completion without asking
 """
 
 
@@ -198,6 +224,24 @@ def _add_command(
     return command
 
 
+def _add_startup_file_options(
+    command: help_format.Parser, *, yes_help: str
+) -> None:
+    """Adds the options of commands that may edit a shell startup file.
+
+    Args:
+        command: The command's parser.
+        yes_help: Help text for ``--yes`` on this command.
+    """
+    command.add_argument("-y", "--yes", action="store_true", help=yes_help)
+    command.add_argument(
+        "--startup-file",
+        type=pathlib.Path,
+        metavar="<path>",
+        help="Startup file to edit (default: ~/.zshrc or ~/.bashrc)",
+    )
+
+
 def _build_parser() -> help_format.Parser:
     """Defines the commands and their flags."""
     parser = help_format.Parser(
@@ -211,6 +255,20 @@ def _build_parser() -> help_format.Parser:
     commands = parser.add_subparsers(
         title="Commands", dest="command", metavar="<command>"
     )
+
+    setup = _add_command(
+        commands,
+        "setup",
+        summary="Check your GitHub token and turn on Tab completion",
+        usage="%(prog)s [options]",
+        description="Get ready to use triage: confirm your GitHub token "
+        "works and offer Tab\ncompletion.",
+        epilog=_SETUP_EPILOG,
+    )
+    _add_startup_file_options(
+        setup, yes_help="Turn on Tab completion without asking"
+    )
+    setup.set_defaults(handler=_run_setup)
 
     add = _add_command(
         commands,
@@ -278,16 +336,28 @@ def _build_parser() -> help_format.Parser:
     completion_command = _add_command(
         commands,
         "completion",
-        summary="Print a shell completion script",
-        usage="%(prog)s [options] <shell>",
-        description="Print a script that adds Tab completion to your shell.",
+        summary="Turn on Tab completion or print its script",
+        usage="%(prog)s [options] <shell>\n"
+        "  triage completion install [options] [<shell>]",
+        description="Print the Tab completion script for your shell, or "
+        "install it in your\nshell's startup file.",
         epilog=_COMPLETION_EPILOG,
     )
     completion_command.add_argument(
-        "shell",
-        metavar="<shell>",
+        "target",
+        metavar="<shell>|install",
+        choices=[*sorted(completion.SCRIPTS), "install"],
+        help="bash or zsh to print the script; install to set it up",
+    )
+    completion_command.add_argument(
+        "install_shell",
+        nargs="?",
         choices=sorted(completion.SCRIPTS),
-        help="bash or zsh",
+        help=argparse.SUPPRESS,
+    )
+    _add_startup_file_options(
+        completion_command,
+        yes_help="With install: add the lines without asking",
     )
     completion_command.set_defaults(handler=_run_completion)
     return parser
@@ -445,5 +515,128 @@ def _print_names(paths: list[pathlib.Path]) -> None:
 
 
 def _run_completion(args: argparse.Namespace) -> None:
-    """Prints the completion script for the requested shell."""
-    print(completion.SCRIPTS[args.shell], end="")
+    """Prints a completion script, or installs one with ``install``."""
+    if args.target != "install":
+        if args.install_shell:
+            raise SetupError(
+                f"Unexpected argument {args.install_shell!r}. To set up "
+                f"completion, run: triage completion install {args.target}"
+            )
+        print(completion.SCRIPTS[args.target], end="")
+        return
+
+    shell = args.install_shell or completion.detect_shell(os.environ)
+    if shell is None:
+        raise SetupError(_unknown_shell_message())
+    _offer_completion(shell, _startup_file(args, shell), args.yes)
+
+
+def _run_setup(args: argparse.Namespace) -> None:
+    """Checks the GitHub token, then offers Tab completion."""
+    token_ok = _check_token_step()
+
+    shell = completion.detect_shell(os.environ)
+    if shell is None:
+        print(f"Tab completion: skipped. {_unknown_shell_message()}")
+    else:
+        try:
+            _offer_completion(shell, _startup_file(args, shell), args.yes)
+        except ConfirmationRequiredError:
+            print(
+                "Tab completion: skipped (no terminal to ask). Turn it on "
+                "with: triage completion install --yes"
+            )
+
+    if not token_ok:
+        raise SetupError(
+            "Setup isn't finished: fix the GitHub token, then run "
+            "triage setup again."
+        )
+    print("\nReady. Try: triage add https://github.com/<owner>/<repo>")
+
+
+def _check_token_step() -> bool:
+    """Prints whether a GitHub token is configured and accepted.
+
+    Returns:
+        True if GitHub accepted the token.
+    """
+    try:
+        token = github_api.load_token()
+    except github_api.GitHubError:
+        print(
+            "GitHub token: not found. Create a read-only token (README, "
+            "setup step 2),\nsave it in .env as GITHUB_TOKEN=..., then run "
+            "triage setup again."
+        )
+        return False
+    try:
+        status = github_api.check_token(token)
+    except github_api.GitHubError as error:
+        print(f"GitHub token: doesn't work. {error}")
+        return False
+    print(
+        f"GitHub token: works for {status.login} ({status.remaining:,} of "
+        f"{status.limit:,} requests left this hour)."
+    )
+    return True
+
+
+def _offer_completion(shell: str, path: pathlib.Path, assume_yes: bool) -> None:
+    """Adds the completion lines to a startup file after confirmation.
+
+    Args:
+        shell: ``"bash"`` or ``"zsh"``.
+        path: The startup file to edit.
+        assume_yes: Skip the question and add the lines.
+
+    Raises:
+        ConfirmationRequiredError: Confirmation is needed but there's no
+            terminal to ask on.
+    """
+    shown = _display_path(path)
+    if completion.is_installed(path, shell):
+        print(f"Tab completion: already set up in {shown}.")
+        return
+    lines = "".join(
+        f"  {line}\n" for line in completion.setup_lines(shell).splitlines()
+    )
+    question = (
+        f"Turn on Tab completion for {shell}? This adds 2 lines to "
+        f"{shown}:\n\n{lines}\n[y/N] "
+    )
+    if not assume_yes and not _confirm(question):
+        print(
+            "Tab completion: skipped. Turn it on any time with: "
+            "triage completion install"
+        )
+        return
+    completion.install(path, shell)
+    print(f"Tab completion: added to {shown}. Open a new terminal to use it.")
+
+
+def _unknown_shell_message() -> str:
+    """Explains why the shell wasn't recognized and what to run instead."""
+    name = pathlib.PurePath(os.environ.get("SHELL", "")).name
+    reason = (
+        f"Tab completion supports bash and zsh, not {name}."
+        if name
+        else "Couldn't tell which shell you use."
+    )
+    return f"{reason} For bash or zsh, run: triage completion install zsh"
+
+
+def _startup_file(args: argparse.Namespace, shell: str) -> pathlib.Path:
+    """Returns ``--startup-file`` or the shell's usual startup file."""
+    if args.startup_file is not None:
+        startup: pathlib.Path = args.startup_file
+        return startup
+    return completion.startup_file(shell, os.environ, pathlib.Path.home())
+
+
+def _display_path(path: pathlib.Path) -> str:
+    """Shows a path under the home folder as ``~/...``."""
+    try:
+        return "~/" + str(path.relative_to(pathlib.Path.home()))
+    except ValueError:
+        return str(path)
