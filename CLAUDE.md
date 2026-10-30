@@ -59,6 +59,12 @@ House style: **Python 3.10+** and the
      what you did and leave "Changed or overrode" and "Verified by hand"
      for the human to fill in unless they've told you.
   5. **Do not merge PRs.** The human reviews and merges after CI passes.
+  6. After the human merges, clean up locally. GitHub deletes the remote
+     branch automatically ("Automatically delete head branches" is on).
+     Confirm the PR is merged with `gh pr view <branch> --json state`, then:
+     `git switch main && git pull --prune && git branch -D <branch>`.
+     (`-D` is needed because squash merges rewrite commits; only use it
+     after confirming the PR state is `MERGED`.)
 - One logical change per PR. Keep PRs small enough to review in one sitting.
 
 ## Commit messages
