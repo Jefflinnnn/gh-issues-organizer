@@ -122,3 +122,106 @@ def test_summarize_reports_counts(
 
     assert summary.name_with_owner == "vorssaint/vorssaint-utils"
     assert (summary.open_issues, summary.total_open) == (3, 887)
+
+
+def _saved(
+    db_path: pathlib.Path, fetch_result: github_api.FetchResult
+) -> sqlite3.Connection:
+    connection = store.connect(db_path)
+    store.save_fetch(connection, fetch_result, "add", store.utc_now())
+    return connection
+
+
+def _fetch_of(
+    fetch_result: github_api.FetchResult, *issues: github_api.Issue
+) -> github_api.FetchResult:
+    return dataclasses.replace(fetch_result, issues=list(issues))
+
+
+def test_last_activity_is_the_newest_stored_update(
+    db_path: pathlib.Path, fetch_result: github_api.FetchResult
+) -> None:
+    connection = _saved(db_path, fetch_result)
+
+    assert store.last_activity(connection) == "2026-10-30T04:43:23Z"
+
+
+def test_last_activity_without_issues_is_when_the_repo_was_added(
+    db_path: pathlib.Path, fetch_result: github_api.FetchResult
+) -> None:
+    connection = _saved(db_path, _fetch_of(fetch_result))
+
+    added = connection.execute("SELECT added_at FROM repository").fetchone()
+    assert store.last_activity(connection) == added["added_at"]
+
+
+def test_last_activity_needs_a_repository(db_path: pathlib.Path) -> None:
+    with pytest.raises(store.StoreError, match="no repository"):
+        store.last_activity(store.connect(db_path))
+
+
+def test_first_save_counts_every_issue_as_created(
+    db_path: pathlib.Path, fetch_result: github_api.FetchResult
+) -> None:
+    connection = store.connect(db_path)
+
+    changes = store.save_fetch(connection, fetch_result, "add", "t")
+
+    assert changes == store.Changes(created=3)
+
+
+def test_save_fetch_classifies_each_change(
+    db_path: pathlib.Path, fetch_result: github_api.FetchResult
+) -> None:
+    connection = _saved(db_path, fetch_result)
+    first, second, third = fetch_result.issues
+    closed = dataclasses.replace(
+        first, state="CLOSED", updated_at="2026-10-31T00:00:00Z"
+    )
+    commented = dataclasses.replace(
+        second, comment_count=9, updated_at="2026-10-31T00:00:01Z"
+    )
+    brand_new = dataclasses.replace(third, id="new-id", number=9999)
+
+    changes = store.save_fetch(
+        connection,
+        _fetch_of(fetch_result, closed, commented, brand_new),
+        "sync",
+        "t",
+    )
+
+    assert changes == store.Changes(created=1, closed=1, updated=1)
+    state = connection.execute(
+        "SELECT state FROM issues WHERE id = ?", (first.id,)
+    ).fetchone()
+    assert state["state"] == "CLOSED"
+
+
+def test_save_fetch_counts_a_reopened_issue(
+    db_path: pathlib.Path, fetch_result: github_api.FetchResult
+) -> None:
+    connection = _saved(db_path, fetch_result)
+    issue = fetch_result.issues[0]
+    closed = dataclasses.replace(
+        issue, state="CLOSED", updated_at="2026-10-31T00:00:00Z"
+    )
+    reopened = dataclasses.replace(
+        issue, state="OPEN", updated_at="2026-11-01T00:00:00Z"
+    )
+    store.save_fetch(connection, _fetch_of(fetch_result, closed), "sync", "t")
+
+    changes = store.save_fetch(
+        connection, _fetch_of(fetch_result, reopened), "sync", "t"
+    )
+
+    assert changes == store.Changes(reopened=1)
+
+
+def test_save_fetch_ignores_an_issue_that_has_not_changed(
+    db_path: pathlib.Path, fetch_result: github_api.FetchResult
+) -> None:
+    connection = _saved(db_path, fetch_result)
+
+    changes = store.save_fetch(connection, fetch_result, "sync", "t")
+
+    assert changes == store.Changes()

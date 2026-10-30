@@ -1,5 +1,6 @@
 """Stores one repository's issues in a local SQLite file."""
 
+import collections
 import dataclasses
 import datetime
 import json
@@ -94,6 +95,26 @@ class RepoSummary:
     path: pathlib.Path
 
 
+@dataclasses.dataclass(frozen=True)
+class Changes:
+    """How a saved fetch differs from what was already stored.
+
+    An issue GitHub sent again with the same ``updated_at`` is unchanged and
+    counted nowhere.
+
+    Attributes:
+        created: Issues not stored before.
+        closed: Stored open issues that are now closed.
+        reopened: Stored closed issues that are open again.
+        updated: Other stored issues that changed, e.g. new comments.
+    """
+
+    created: int = 0
+    closed: int = 0
+    reopened: int = 0
+    updated: int = 0
+
+
 def utc_now() -> str:
     """Returns the current UTC time as an ISO 8601 string."""
     return (
@@ -133,12 +154,36 @@ def connect(path: pathlib.Path) -> sqlite3.Connection:
     return connection
 
 
+def last_activity(connection: sqlite3.Connection) -> str:
+    """Returns the time after which ``sync`` should look for changes.
+
+    This is the newest ``updated_at`` stored, a time GitHub reported, so a
+    wrong clock on this computer can't make ``sync`` skip changes. A file
+    with no issues falls back to when the repository was added.
+
+    Args:
+        connection: An open cache file from ``connect``.
+
+    Returns:
+        An ISO 8601 time.
+
+    Raises:
+        StoreError: The file has no repository recorded.
+    """
+    repo = connection.execute("SELECT added_at FROM repository").fetchone()
+    if repo is None:
+        raise StoreError("This cache file has no repository recorded.")
+    newest = connection.execute("SELECT MAX(updated_at) FROM issues").fetchone()
+    result: str = newest[0] or repo["added_at"]
+    return result
+
+
 def save_fetch(
     connection: sqlite3.Connection,
     fetch: github_api.FetchResult,
     kind: str,
     started_at: str,
-) -> None:
+) -> Changes:
     """Writes a fetch's repository, issues, comments and run in one step.
 
     Issues are upserted on their node ID, so saving the same issue twice
@@ -151,13 +196,18 @@ def save_fetch(
         kind: What produced the fetch, such as ``"add"``.
         started_at: ISO 8601 time the run began.
 
+    Returns:
+        How the fetch differs from what was stored.
+
     Raises:
         StoreError: The file already belongs to a different repository.
     """
     finished_at = utc_now()
+    counts = collections.Counter[str]()
     with connection:
         _save_repository(connection, fetch.repository, finished_at)
         for issue in fetch.issues:
+            counts[_change_kind(connection, issue)] += 1
             _upsert_issue(connection, issue, finished_at)
         connection.execute(
             """
@@ -181,6 +231,30 @@ def save_fetch(
         len(fetch.issues),
         fetch.repository.name_with_owner,
     )
+    return Changes(
+        created=counts["created"],
+        closed=counts["closed"],
+        reopened=counts["reopened"],
+        updated=counts["updated"],
+    )
+
+
+def _change_kind(
+    connection: sqlite3.Connection, issue: github_api.Issue
+) -> str:
+    """Says how an issue differs from its stored copy, if it's stored."""
+    stored = connection.execute(
+        "SELECT state, updated_at FROM issues WHERE id = ?", (issue.id,)
+    ).fetchone()
+    if stored is None:
+        return "created"
+    if stored["updated_at"] == issue.updated_at:
+        return "unchanged"
+    if stored["state"] == "OPEN" and issue.state == "CLOSED":
+        return "closed"
+    if stored["state"] == "CLOSED" and issue.state == "OPEN":
+        return "reopened"
+    return "updated"
 
 
 def _save_repository(

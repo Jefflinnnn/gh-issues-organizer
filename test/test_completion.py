@@ -97,9 +97,14 @@ bash_only = pytest.mark.skipif(
 @pytest.mark.parametrize(
     ("words", "expected"),
     [
-        (["triage", ""], ["setup", "add", "list", "remove", "completion"]),
+        (
+            ["triage", ""],
+            ["setup", "add", "sync", "list", "remove", "completion"],
+        ),
         (["triage", "re"], ["remove"]),
         (["triage", "remove", ""], TRACKED),
+        (["triage", "sync", ""], TRACKED),
+        (["triage", "sync", "vor"], ["vorssaint/vorssaint-utils"]),
         (["triage", "remove", "vor"], ["vorssaint/vorssaint-utils"]),
         (["triage", "-v", "remove", "Bar"], ["BaranziniLab/biorouter"]),
         (

@@ -1,3 +1,4 @@
+import copy
 import pathlib
 from typing import Any
 
@@ -116,3 +117,91 @@ def test_parse_viewer_response_reports_errors() -> None:
     payload = {"errors": [{"message": "Bad credentials"}]}
     with pytest.raises(github_api.GitHubError, match="Bad credentials"):
         github_api.parse_viewer_response(payload)
+
+
+def _changed_page(
+    payload: dict[str, Any],
+    nodes: list[dict[str, Any]],
+    *,
+    cursor: str | None,
+    cost: int = 1,
+) -> dict[str, Any]:
+    """Reshapes the recorded response into a CHANGED_ISSUES_QUERY page."""
+    page = copy.deepcopy(payload)
+    page["data"]["rateLimit"]["cost"] = cost
+    page["data"]["rateLimit"]["remaining"] = 5000 - cost
+    repository = page["data"]["repository"]
+    repository["openIssues"] = {"totalCount": 887}
+    repository["issues"] = {
+        "pageInfo": {"hasNextPage": cursor is not None, "endCursor": cursor},
+        "nodes": nodes,
+    }
+    return page
+
+
+def test_parse_changed_response_reads_paging(
+    issues_payload: dict[str, Any],
+) -> None:
+    nodes = issues_payload["data"]["repository"]["issues"]["nodes"]
+    payload = _changed_page(issues_payload, nodes, cursor="abc")
+
+    page = github_api.parse_changed_response(payload, REPO)
+
+    assert (page.has_next_page, page.end_cursor) == (True, "abc")
+    assert len(page.fetch.issues) == 3
+    assert page.fetch.total_open == 887
+
+
+def test_fetch_changed_issues_follows_every_page(
+    issues_payload: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    nodes = issues_payload["data"]["repository"]["issues"]["nodes"]
+    pages = [
+        _changed_page(issues_payload, nodes[:2], cursor="c1", cost=1),
+        _changed_page(issues_payload, nodes[2:], cursor=None, cost=2),
+    ]
+    sent: list[dict[str, Any]] = []
+
+    def post(
+        query: str, variables: dict[str, Any], token: str
+    ) -> dict[str, Any]:
+        sent.append(variables)
+        return pages[len(sent) - 1]
+
+    monkeypatch.setattr(github_api, "_post_graphql", post)
+
+    result = github_api.fetch_changed_issues(
+        REPO, "2026-10-01T00:00:00Z", comments=3, token="t"
+    )
+
+    assert [variables["after"] for variables in sent] == [None, "c1"]
+    assert {variables["since"] for variables in sent} == {
+        "2026-10-01T00:00:00Z"
+    }
+    assert [issue.number for issue in result.issues] == [3267, 3668, 3678]
+    assert result.rate_limit_cost == 3
+
+
+def test_fetch_changed_issues_keeps_the_newest_copy_of_a_repeat(
+    issues_payload: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node = issues_payload["data"]["repository"]["issues"]["nodes"][0]
+    edited = {**node, "title": "Edited while paging"}
+    pages = iter(
+        [
+            _changed_page(issues_payload, [node], cursor="c1"),
+            _changed_page(issues_payload, [edited], cursor=None),
+        ]
+    )
+    monkeypatch.setattr(github_api, "_post_graphql", lambda *args: next(pages))
+
+    result = github_api.fetch_changed_issues(
+        REPO, "2026-10-01T00:00:00Z", comments=3, token="t"
+    )
+
+    assert [issue.title for issue in result.issues] == ["Edited while paging"]
+
+
+def test_fetch_changed_issues_rejects_out_of_range_comments() -> None:
+    with pytest.raises(ValueError, match="comments"):
+        github_api.fetch_changed_issues(REPO, "2026-10-01T00:00:00Z", 101, "t")

@@ -47,12 +47,17 @@ class SetupError(RuntimeError):
     """Raised when setup can't finish or a setup command is misused."""
 
 
+class SyncError(RuntimeError):
+    """Raised when ``sync`` couldn't update every repository it tried."""
+
+
 _COMMAND_ERRORS = (
     *_USER_ERRORS,
     AlreadyTrackedError,
     NotTrackedError,
     ConfirmationRequiredError,
     SetupError,
+    SyncError,
 )
 
 
@@ -62,6 +67,7 @@ New here? Run "triage setup" first.
 Examples:
   triage add https://github.com/vorssaint/vorssaint-utils
   triage add vorssaint/vorssaint-utils --limit 25
+  triage sync
   triage list
   triage remove vorssaint/vorssaint-utils
 
@@ -81,6 +87,18 @@ Repository formats:
 Examples:
   triage add https://github.com/vorssaint/vorssaint-utils
   triage add vorssaint/vorssaint-utils --limit 25 --comments 5
+"""
+
+_SYNC_EPILOG = """\
+What it fetches:
+  Issues created, edited, commented on, closed or reopened since the newest
+  change already stored. Run it as often as you like: nothing is fetched
+  twice, and a run with no changes costs one request.
+
+Examples:
+  triage sync                           # every tracked repository
+  triage sync vorssaint/vorssaint-utils
+  triage sync --comments 5
 """
 
 _LIST_EPILOG = """\
@@ -301,6 +319,31 @@ def _build_parser() -> help_format.Parser:
     )
     add.set_defaults(handler=_run_add)
 
+    sync = _add_command(
+        commands,
+        "sync",
+        summary="Fetch issues changed since the last run",
+        usage="%(prog)s [options] [<repo>]",
+        description="Fetch the issues created, changed or closed since the "
+        "last run and\nupdate the cache. Without <repo>, every tracked "
+        "repository is synced.",
+        epilog=_SYNC_EPILOG,
+    )
+    sync.add_argument(
+        "repo",
+        nargs="?",
+        metavar="<repo>",
+        help="GitHub link or owner/name (default: all tracked)",
+    )
+    sync.add_argument(
+        "--comments",
+        type=int,
+        metavar="<n>",
+        default=DEFAULT_COMMENTS,
+        help="Latest comments to keep per changed issue (default: %(default)s)",
+    )
+    sync.set_defaults(handler=_run_sync)
+
     list_command = _add_command(
         commands,
         "list",
@@ -416,6 +459,74 @@ def _write_new_cache(
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise
+
+
+def _run_sync(args: argparse.Namespace) -> None:
+    """Updates one tracked repository, or all of them, with new changes."""
+    data_dir: pathlib.Path = args.data_dir
+    if args.repo is None:
+        paths = sorted(data_dir.glob("*.db")) if data_dir.is_dir() else []
+        if not paths:
+            print("No tracked repositories. Add one with: triage add <link>")
+            return
+    else:
+        requested = repo_ref.parse(args.repo)
+        path = data_dir / requested.db_filename
+        if not path.exists():
+            raise NotTrackedError(
+                f"{requested.full_name} is not tracked. Add it with: "
+                f"triage add {requested.full_name}"
+            )
+        paths = [path]
+
+    token = github_api.load_token()
+    failed = 0
+    for path in paths:
+        try:
+            print(_sync_one(path, args.comments, token))
+        except _USER_ERRORS as error:
+            # One broken repository shouldn't stop the others.
+            logger.error("%s: %s", path.name, error)
+            logger.debug("Details:", exc_info=True)
+            failed += 1
+    if failed:
+        raise SyncError(f"{failed} of {len(paths)} repositories not synced.")
+
+
+def _sync_one(path: pathlib.Path, comments: int, token: str) -> str:
+    """Syncs one cache file and returns its one-line result."""
+    started_at = store.utc_now()
+    connection = store.connect(path)
+    try:
+        since = store.last_activity(connection)
+        name = connection.execute(
+            "SELECT name_with_owner FROM repository"
+        ).fetchone()[0]
+        fetch = github_api.fetch_changed_issues(
+            repo_ref.parse(name), since, comments, token
+        )
+        changes = store.save_fetch(connection, fetch, "sync", started_at)
+    finally:
+        connection.close()
+    return _describe_sync(fetch.repository.name_with_owner, changes, fetch)
+
+
+def _describe_sync(
+    name: str, changes: store.Changes, fetch: github_api.FetchResult
+) -> str:
+    """Formats a sync result, leaving out counts that are zero."""
+    parts = [
+        f"{count} {label}"
+        for count, label in (
+            (changes.created, "new"),
+            (changes.closed, "closed"),
+            (changes.reopened, "reopened"),
+            (changes.updated, "updated"),
+        )
+        if count
+    ]
+    summary = " · ".join(parts) if parts else "no changes"
+    return f"{name} · {summary} · {fetch.total_open} open on GitHub"
 
 
 def _run_list(args: argparse.Namespace) -> None:
