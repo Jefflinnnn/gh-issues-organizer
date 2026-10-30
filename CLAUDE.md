@@ -21,9 +21,26 @@ House style: **Python 3.10+** and the
 - **Naming:** `snake_case` functions and variables, `PascalCase` classes,
   `UPPER_SNAKE_CASE` constants, `_leading_underscore` for internals.
 - **No** mutable default arguments, bare `except:`, or wildcard imports.
+- **Readable code over comments.** Prefer clear, descriptive names and
+  straightforward logic so the code explains itself. Don't comment what the
+  code already says. Add comments only to explain *why* (a non-obvious
+  decision, constraint, or workaround) or to walk through genuinely complex
+  logic. Docstrings are still required as above.
 - Ruff (with the `google` pydocstyle convention) and mypy enforce this once
   `pyproject.toml` exists; when the guide and the tools disagree, follow
   the guide and adjust the tool config.
+
+## Logging
+
+- Use the standard `logging` module with one logger per module:
+  `logger = logging.getLogger(__name__)`. No `print()` for diagnostics.
+- Per the Google guide, pass a **string literal with `%` placeholders** and
+  the values as arguments, never an f-string:
+  `logger.info("Fetched %d issues from %s", count, repo)`.
+- **Never log secrets**: no API keys, tokens, or auth headers, at any level.
+- Logs go to **stderr**; the tool's report goes to **stdout**.
+- Inside `except` blocks, use `logger.exception(...)` to keep the traceback.
+  Fail loudly; don't swallow errors.
 
 ## Git workflow
 
