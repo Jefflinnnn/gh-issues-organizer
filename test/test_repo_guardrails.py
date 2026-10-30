@@ -38,7 +38,8 @@ def _is_git_ignored(relative_path: str) -> bool:
 def _claude_deny_rules() -> list[str]:
     """Returns the deny rules from the shared Claude Code settings."""
     settings = json.loads(CLAUDE_SETTINGS_PATH.read_text(encoding="utf-8"))
-    return settings["permissions"]["deny"]
+    deny_rules: list[str] = settings["permissions"]["deny"]
+    return deny_rules
 
 
 @pytest.mark.parametrize(
