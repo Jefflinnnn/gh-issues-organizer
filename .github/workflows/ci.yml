@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  checks:
+    name: Lint, types, tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Ruff runs even before pyproject.toml exists.
+      - name: Ruff lint
+        run: uvx ruff check .
+      - name: Ruff format check
+        run: uvx ruff format --check .
+
+      # The steps below switch on automatically once pyproject.toml lands.
+      - name: Install project
+        if: hashFiles('pyproject.toml') != ''
+        run: uv sync --all-extras --dev
+
+      - name: Type check (mypy)
+        if: hashFiles('pyproject.toml') != ''
+        run: uv run mypy .
+
+      - name: Tests (pytest)
+        if: hashFiles('pyproject.toml') != ''
+        # Exit code 5 means "no tests collected"; allowed only until tests exist.
+        run: uv run pytest || [ $? -eq 5 ]
