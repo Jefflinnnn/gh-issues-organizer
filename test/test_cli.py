@@ -194,3 +194,117 @@ def test_missing_repo_points_to_examples(
 
     assert exit_info.value.code == 2
     assert "Run 'triage add -h' for examples." in capsys.readouterr().err
+
+
+class _FakeStdin:
+    """A stand-in for sys.stdin that looks like a terminal."""
+
+    def __init__(self, answer: str, is_terminal: bool = True) -> None:
+        self._answer = answer
+        self._is_terminal = is_terminal
+
+    def isatty(self) -> bool:
+        return self._is_terminal
+
+    def readline(self) -> str:
+        return self._answer
+
+
+@pytest.fixture
+def tracked(tmp_path: pathlib.Path, fake_github: object) -> pathlib.Path:
+    """Tracks the fixture repo and returns its cache file."""
+    assert _run(tmp_path, "add", "vorssaint/vorssaint-utils") == 0
+    return tmp_path / DB_NAME
+
+
+def test_remove_with_yes_deletes_the_file(
+    tmp_path: pathlib.Path,
+    tracked: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    capsys.readouterr()
+
+    assert _run(tmp_path, "remove", "vorssaint/vorssaint-utils", "--yes") == 0
+
+    assert not tracked.exists()
+    assert "Removed vorssaint/vorssaint-utils" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("answer", ["y\n", "YES\n"])
+def test_remove_deletes_after_yes(
+    tmp_path: pathlib.Path,
+    tracked: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    answer: str,
+) -> None:
+    monkeypatch.setattr("sys.stdin", _FakeStdin(answer))
+
+    assert (
+        _run(tmp_path, "remove", "https://github.com/Vorssaint/Vorssaint-Utils")
+        == 0
+    )
+
+    assert not tracked.exists()
+    assert (
+        "3 stored issues? You'll need 'triage add'" in capsys.readouterr().err
+    )
+
+
+@pytest.mark.parametrize("answer", ["\n", "n\n", "nope\n", ""])
+def test_remove_keeps_the_file_unless_confirmed(
+    tmp_path: pathlib.Path,
+    tracked: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    answer: str,
+) -> None:
+    monkeypatch.setattr("sys.stdin", _FakeStdin(answer))
+
+    assert _run(tmp_path, "remove", "vorssaint/vorssaint-utils") == 0
+
+    assert tracked.exists()
+    assert "Nothing removed." in capsys.readouterr().out
+
+
+def test_remove_without_a_terminal_needs_yes(
+    tmp_path: pathlib.Path,
+    tracked: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr("sys.stdin", _FakeStdin("y\n", is_terminal=False))
+
+    assert _run(tmp_path, "remove", "vorssaint/vorssaint-utils") == 1
+
+    assert tracked.exists()
+    assert "--yes" in caplog.text
+
+
+def test_remove_an_untracked_repo_fails(
+    tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert _run(tmp_path, "remove", "nobody/nothing", "--yes") == 1
+    assert "not tracked" in caplog.text
+
+
+def test_remove_deletes_an_unreadable_file(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broken = tmp_path / DB_NAME
+    broken.write_bytes(b"not a database")
+
+    assert _run(tmp_path, "remove", "vorssaint/vorssaint-utils", "--yes") == 0
+
+    assert not broken.exists()
+    assert "Removed vorssaint/vorssaint-utils" in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("tracked")
+def test_remove_then_add_tracks_again(
+    tmp_path: pathlib.Path, fake_github: object
+) -> None:
+    _run(tmp_path, "remove", "vorssaint/vorssaint-utils", "--yes")
+
+    assert _run(tmp_path, "add", "vorssaint/vorssaint-utils") == 0
+    assert (tmp_path / DB_NAME).exists()

@@ -73,6 +73,14 @@ Show tracked repositories:
 triage list
 ```
 
+Stop tracking a repository and delete its cache file. `triage` asks for
+confirmation first; `--yes` skips the question. To track it again, run
+`triage add`.
+
+```bash
+triage remove vorssaint/vorssaint-utils
+```
+
 Run `triage -h`, `triage add -h` or `triage list -h` for options and
 examples. Shared options such as `-v` work before or after the command
 (`triage -v add ...` or `triage add -v ...`).
@@ -83,6 +91,7 @@ Options:
 | --- | --- | --- |
 | `--limit N` (add) | 10 | Open issues to fetch, 1 to 100 |
 | `--comments N` (add) | 3 | Latest comments kept per issue |
+| `--yes` (remove) | off | Delete without asking |
 | `--data-dir PATH` | `.cache` | Folder holding the cache files |
 | `-v` | off | Show debug logs |
 
