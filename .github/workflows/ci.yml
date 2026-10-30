@@ -39,16 +39,23 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      # Ruff runs even before pyproject.toml exists.
-      - name: Ruff lint
-        run: uvx ruff check .
-      - name: Ruff format check
-        run: uvx ruff format --check .
-
-      # The steps below switch on automatically once pyproject.toml lands.
+      # --locked fails if uv.lock is out of date with pyproject.toml, so CI
+      # always tests the versions recorded in the lockfile.
       - name: Install project
         if: hashFiles('pyproject.toml') != ''
-        run: uv sync --all-extras --dev
+        run: uv sync --locked --all-extras --dev
+
+      # Ruff comes from uv.lock once the project exists; before that, uvx.
+      - name: Ruff lint
+        run: |
+          if [ -f pyproject.toml ]; then uv run ruff check .
+          else uvx ruff check .; fi
+      - name: Ruff format check
+        run: |
+          if [ -f pyproject.toml ]; then uv run ruff format --check .
+          else uvx ruff format --check .; fi
+
+      # The steps below switch on automatically once pyproject.toml lands.
 
       - name: Type check (mypy)
         if: hashFiles('pyproject.toml') != ''
