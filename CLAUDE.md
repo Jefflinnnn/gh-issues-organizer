@@ -3,6 +3,28 @@
 Project rules for Claude Code. Personal, machine-specific notes go in
 `CLAUDE.local.md` (gitignored).
 
+## Code style
+
+House style: **Python 3.10+** and the
+[Google Python Style Guide](https://google.github.io/styleguide/pyguide.html).
+
+- **Target Python 3.10.** Use 3.10 features freely (`X | None` unions,
+  built-in generics like `list[str]`, `match`). Do not use 3.11+ only APIs
+  (`tomllib`, `typing.Self`, `StrEnum`, `ExceptionGroup`) without a fallback.
+- **Docstrings:** Google style, with `Args:`, `Returns:`, `Raises:`
+  sections, on every public module, class, and function.
+- **Type annotations** on all public functions and methods.
+- **Line length:** 80 characters.
+- **Imports:** import packages and modules, not individual classes or
+  functions (`from typing` is the usual exception). One import per line,
+  grouped stdlib / third-party / local.
+- **Naming:** `snake_case` functions and variables, `PascalCase` classes,
+  `UPPER_SNAKE_CASE` constants, `_leading_underscore` for internals.
+- **No** mutable default arguments, bare `except:`, or wildcard imports.
+- Ruff (with the `google` pydocstyle convention) and mypy enforce this once
+  `pyproject.toml` exists; when the guide and the tools disagree, follow
+  the guide and adjust the tool config.
+
 ## Git workflow
 
 - **Never commit or push directly to `main`.** `main` is protected and only
