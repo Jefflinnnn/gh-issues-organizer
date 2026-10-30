@@ -99,6 +99,24 @@ Each tracked repository gets one SQLite file in `.cache/`, for example
 `.cache/vorssaint__vorssaint-utils.db`. The tool creates the file and its
 tables on first use; nothing needs setting up. Git ignores `.cache/`.
 
+## Tab completion
+
+Add one line to your shell's startup file, then open a new terminal:
+
+```bash
+# zsh: ~/.zshrc
+eval "$(triage completion zsh)"
+
+# bash: ~/.bashrc
+eval "$(triage completion bash)"
+```
+
+Press Tab after `triage ` to complete a command, or after `triage remove `
+to complete a tracked repository's name. Press Tab again to cycle through
+the matches; in bash, cycling needs `bind 'TAB:menu-complete'`. Completion
+lists the repositories tracked in the current folder, the same ones
+`triage list --names` prints.
+
 ## Troubleshooting
 
 | Message | Fix |
