@@ -9,12 +9,12 @@ import sys
 from collections.abc import Callable
 from collections.abc import Sequence
 
-from gh_triage import completion
-from gh_triage import github_api
-from gh_triage import help_format
-from gh_triage import repo_ref
-from gh_triage import store
-from gh_triage import timefmt
+from issue_store import github_api
+from issue_store import repo_ref
+from issue_store import store
+from triage_cli import completion
+from triage_cli import help_format
+from triage_cli import timefmt
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from gh_triage import repo_ref
+from issue_store import repo_ref
 
 logger = logging.getLogger(__name__)
 

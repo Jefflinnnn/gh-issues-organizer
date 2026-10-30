@@ -8,10 +8,10 @@ from collections.abc import Callable
 import pytest
 from conftest import FakeSync
 
-from gh_triage import cli
-from gh_triage import github_api
-from gh_triage import repo_ref
-from gh_triage import store
+from issue_store import github_api
+from issue_store import repo_ref
+from issue_store import store
+from triage_cli import cli
 
 Triage = Callable[..., int]
 AnswerPrompt = Callable[..., None]

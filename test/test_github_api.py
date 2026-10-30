@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 
-from gh_triage import github_api
-from gh_triage import repo_ref
+from issue_store import github_api
+from issue_store import repo_ref
 
 REPO = repo_ref.RepoRef(owner="vorssaint", name="vorssaint-utils")
 

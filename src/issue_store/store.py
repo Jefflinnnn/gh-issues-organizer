@@ -8,7 +8,7 @@ import logging
 import pathlib
 import sqlite3
 
-from gh_triage import github_api
+from issue_store import github_api
 
 logger = logging.getLogger(__name__)
 

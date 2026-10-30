@@ -15,9 +15,9 @@ from typing import Any
 
 import pytest
 
-from gh_triage import cli
-from gh_triage import github_api
-from gh_triage import repo_ref
+from issue_store import github_api
+from issue_store import repo_ref
+from triage_cli import cli
 
 FIXTURE_PATH = (
     pathlib.Path(__file__).parent / "fixtures" / "issues_response.json"

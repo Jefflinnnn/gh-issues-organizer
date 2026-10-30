@@ -2,7 +2,7 @@
 
 import pytest
 
-from gh_triage import cli
+from triage_cli import cli
 
 
 def _help(capsys: pytest.CaptureFixture[str], *args: str) -> str:
