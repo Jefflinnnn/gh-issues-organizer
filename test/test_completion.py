@@ -4,45 +4,40 @@ import os
 import pathlib
 import shutil
 import subprocess
+from collections.abc import Callable
 
 import pytest
 
 from gh_triage import cli
 from gh_triage import completion
 
-DB_NAME = "vorssaint__vorssaint-utils.db"
 TRACKED = ["BaranziniLab/biorouter", "vorssaint/vorssaint-utils"]
 
 
-@pytest.mark.usefixtures("fake_github")
+@pytest.mark.usefixtures("tracked")
 def test_list_names_prints_only_names(
-    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+    triage: Callable[..., int], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    cli.main(["--data-dir", str(tmp_path), "add", "vorssaint/vorssaint-utils"])
-    capsys.readouterr()
-
-    assert cli.main(["--data-dir", str(tmp_path), "list", "--names"]) == 0
-
+    assert triage("list", "--names") == 0
     assert capsys.readouterr().out == "vorssaint/vorssaint-utils\n"
 
 
-@pytest.mark.usefixtures("fake_github")
+@pytest.mark.usefixtures("tracked")
 def test_list_names_skips_unreadable_files(
-    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+    triage: Callable[..., int],
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    cli.main(["--data-dir", str(tmp_path), "add", "vorssaint/vorssaint-utils"])
     (tmp_path / "broken__file.db").write_bytes(b"not a database")
-    capsys.readouterr()
 
-    assert cli.main(["--data-dir", str(tmp_path), "list", "--names"]) == 0
-
+    assert triage("list", "--names") == 0
     assert capsys.readouterr().out == "vorssaint/vorssaint-utils\n"
 
 
 def test_list_names_with_nothing_tracked_prints_nothing(
-    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+    triage: Callable[..., int], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert cli.main(["--data-dir", str(tmp_path), "list", "--names"]) == 0
+    assert triage("list", "--names") == 0
     assert capsys.readouterr().out == ""
 
 

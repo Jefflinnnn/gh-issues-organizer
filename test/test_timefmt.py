@@ -1,6 +1,7 @@
 """Tests for showing stored UTC times in local time."""
 
 import time
+from collections.abc import Callable
 from collections.abc import Iterator
 
 import pytest
@@ -13,37 +14,44 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def los_angeles(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Sets the process timezone to America/Los_Angeles for one test."""
-    monkeypatch.setenv("TZ", "America/Los_Angeles")
-    time.tzset()
-    yield
+def timezone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[Callable[[str], None]]:
+    """Returns a function that sets the process timezone for one test."""
+
+    def use(name: str) -> None:
+        monkeypatch.setenv("TZ", name)
+        time.tzset()
+
+    yield use
     monkeypatch.undo()
     time.tzset()
 
 
-@pytest.mark.usefixtures("los_angeles")
 @pytest.mark.parametrize(
-    ("stored", "shown"),
+    ("zone", "stored", "shown"),
     [
-        ("2026-10-30T05:18:50+00:00", "2026-10-29 22:18 PDT"),
+        (
+            "America/Los_Angeles",
+            "2026-10-30T05:18:50+00:00",
+            "2026-10-29 22:18 PDT",
+        ),
         # 2026-11-01 01:30 happens twice in Los Angeles; UTC tells them apart.
-        ("2026-11-01T08:30:00+00:00", "2026-11-01 01:30 PDT"),
-        ("2026-11-01T09:30:00+00:00", "2026-11-01 01:30 PST"),
+        (
+            "America/Los_Angeles",
+            "2026-11-01T08:30:00+00:00",
+            "2026-11-01 01:30 PDT",
+        ),
+        (
+            "America/Los_Angeles",
+            "2026-11-01T09:30:00+00:00",
+            "2026-11-01 01:30 PST",
+        ),
+        ("UTC", "2026-10-30T05:18:50+00:00", "2026-10-30 05:18 UTC"),
     ],
 )
-def test_local_display_converts_utc(stored: str, shown: str) -> None:
+def test_local_display_converts_utc(
+    timezone: Callable[[str], None], zone: str, stored: str, shown: str
+) -> None:
+    timezone(zone)
     assert timefmt.local_display(stored) == shown
-
-
-def test_local_display_in_utc(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
-    try:
-        assert (
-            timefmt.local_display("2026-10-30T05:18:50+00:00")
-            == "2026-10-30 05:18 UTC"
-        )
-    finally:
-        monkeypatch.undo()
-        time.tzset()
