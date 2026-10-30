@@ -14,6 +14,7 @@ from gh_triage import github_api
 from gh_triage import help_format
 from gh_triage import repo_ref
 from gh_triage import store
+from gh_triage import timefmt
 
 logger = logging.getLogger(__name__)
 
@@ -428,7 +429,7 @@ def _run_list(args: argparse.Namespace) -> None:
         print("No tracked repositories. Add one with: triage add <github link>")
         return
 
-    rows = [("REPO", "STORED", "OPEN ON GITHUB", "LAST SYNCED (UTC)")]
+    rows = [("REPO", "STORED", "OPEN ON GITHUB", "LAST SYNCED")]
     for path in paths:
         summary = store.summarize(path)
         rows.append(
@@ -436,7 +437,7 @@ def _run_list(args: argparse.Namespace) -> None:
                 summary.name_with_owner,
                 str(summary.open_issues),
                 str(summary.total_open),
-                summary.last_synced_at.replace("+00:00", ""),
+                timefmt.local_display(summary.last_synced_at),
             )
         )
     widths = [max(len(row[column]) for row in rows) for column in range(4)]

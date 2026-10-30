@@ -114,7 +114,10 @@ def test_list_shows_tracked_repositories(
 
     header, row = capsys.readouterr().out.splitlines()
     assert header.split()[0] == "REPO"
+    assert "LAST SYNCED" in header and "UTC" not in header
     assert row.split()[:3] == ["vorssaint/vorssaint-utils", "3", "887"]
+    # Local time, not the stored ISO form.
+    assert "T" not in row.split()[3] and "+00:00" not in row
 
 
 @pytest.mark.parametrize(
