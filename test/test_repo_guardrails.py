@@ -15,6 +15,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CLAUDE_SETTINGS_PATH = REPO_ROOT / ".claude" / "settings.json"
 CLAUDE_MD_PATH = REPO_ROOT / "CLAUDE.md"
 CI_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+PR_TEMPLATE_PATH = REPO_ROOT / ".github" / "pull_request_template.md"
 
 
 def _is_git_ignored(relative_path: str) -> bool:
@@ -133,3 +134,18 @@ def test_ci_scans_for_secrets() -> None:
     """CI includes the gitleaks secret scan."""
     workflow_text = CI_WORKFLOW_PATH.read_text(encoding="utf-8")
     assert "gitleaks/gitleaks-action" in workflow_text
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "## Summary",
+        "## Type of change",
+        "## How has this been tested?",
+        "## AI assistance",
+        "## Checklist",
+    ],
+)
+def test_pr_template_has_required_sections(heading: str) -> None:
+    """The PR template keeps every section reviewers rely on."""
+    assert heading in PR_TEMPLATE_PATH.read_text(encoding="utf-8")
