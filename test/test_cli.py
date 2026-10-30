@@ -2,13 +2,16 @@
 
 import dataclasses
 import pathlib
+import sqlite3
 from collections.abc import Callable
 
 import pytest
+from conftest import FakeSync
 
 from gh_triage import cli
 from gh_triage import github_api
 from gh_triage import repo_ref
+from gh_triage import store
 
 Triage = Callable[..., int]
 AnswerPrompt = Callable[..., None]
@@ -112,6 +115,152 @@ def test_global_options_work_before_or_after_the_command(
 
     assert cli.main(filled) == 0
     assert list(tmp_path.iterdir()) == [cache_file]
+
+
+# --- sync ---------------------------------------------------------------
+
+
+def _other_repo_cache(
+    tmp_path: pathlib.Path, fetch_result: github_api.FetchResult
+) -> None:
+    """Tracks a second repository by writing its cache file directly."""
+    other = dataclasses.replace(
+        fetch_result,
+        repository=github_api.Repository(
+            id="R_widgets",
+            name_with_owner="acme/widgets",
+            url="https://github.com/acme/widgets",
+        ),
+        issues=[],
+    )
+    connection = store.connect(tmp_path / "acme__widgets.db")
+    store.save_fetch(connection, other, "add", store.utc_now())
+    connection.close()
+
+
+@pytest.mark.usefixtures("tracked")
+def test_sync_stores_what_changed_since_the_newest_stored_issue(
+    triage: Triage,
+    cache_file: pathlib.Path,
+    fetch_result: github_api.FetchResult,
+    fake_sync: FakeSync,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    first = fetch_result.issues[0]
+    closed = dataclasses.replace(
+        first, state="CLOSED", updated_at="2026-10-31T00:00:00Z"
+    )
+    brand_new = dataclasses.replace(
+        fetch_result.issues[1],
+        id="new-id",
+        number=9999,
+        recent_comments=[],
+    )
+    fake_sync.issues = [closed, brand_new]
+
+    assert triage("sync") == 0
+
+    assert fake_sync.requests == [
+        ("vorssaint/vorssaint-utils", "2026-10-30T04:43:23Z")
+    ]
+    assert capsys.readouterr().out == (
+        "vorssaint/vorssaint-utils · 1 new · 1 closed · 887 open on GitHub\n"
+    )
+    with sqlite3.connect(cache_file) as connection:
+        states = dict(connection.execute("SELECT number, state FROM issues"))
+        kinds = [row[0] for row in connection.execute("SELECT kind FROM runs")]
+    assert states[first.number] == "CLOSED"
+    assert 9999 in states
+    assert kinds == ["add", "sync"]
+
+
+@pytest.mark.usefixtures("tracked")
+def test_sync_with_nothing_new_says_so(
+    triage: Triage,
+    fake_sync: FakeSync,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert triage("sync") == 0
+
+    assert fake_sync.issues == []
+    assert "no changes · 887 open on GitHub" in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("tracked")
+def test_sync_one_repository_by_link(
+    triage: Triage,
+    tmp_path: pathlib.Path,
+    fetch_result: github_api.FetchResult,
+    fake_sync: FakeSync,
+) -> None:
+    _other_repo_cache(tmp_path, fetch_result)
+
+    assert triage("sync", "https://github.com/vorssaint/vorssaint-utils") == 0
+
+    assert [name for name, _ in fake_sync.requests] == [
+        "vorssaint/vorssaint-utils"
+    ]
+
+
+@pytest.mark.usefixtures("tracked")
+def test_sync_without_a_repo_syncs_every_tracked_one(
+    triage: Triage,
+    tmp_path: pathlib.Path,
+    fetch_result: github_api.FetchResult,
+    fake_sync: FakeSync,
+) -> None:
+    _other_repo_cache(tmp_path, fetch_result)
+
+    assert triage("sync") == 0
+
+    assert sorted(name for name, _ in fake_sync.requests) == [
+        "acme/widgets",
+        "vorssaint/vorssaint-utils",
+    ]
+
+
+@pytest.mark.usefixtures("fake_sync")
+def test_sync_of_an_untracked_repo_is_refused(
+    triage: Triage, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert triage("sync", "vorssaint/vorssaint-utils") == 1
+    assert "not tracked" in caplog.text
+
+
+@pytest.mark.usefixtures("fake_sync")
+def test_sync_with_nothing_tracked_points_to_add(
+    triage: Triage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert triage("sync") == 0
+    assert "triage add" in capsys.readouterr().out
+
+
+@pytest.mark.usefixtures("tracked")
+def test_sync_carries_on_after_one_repository_fails(
+    triage: Triage,
+    tmp_path: pathlib.Path,
+    fetch_result: github_api.FetchResult,
+    fake_sync: FakeSync,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _other_repo_cache(tmp_path, fetch_result)
+
+    def fetch(
+        repo: repo_ref.RepoRef, since: str, comments: int, token: str
+    ) -> github_api.FetchResult:
+        if repo.full_name == "acme/widgets":
+            raise github_api.GitHubError("boom")
+        return dataclasses.replace(fetch_result, issues=[])
+
+    monkeypatch.setattr(github_api, "fetch_changed_issues", fetch)
+
+    assert triage("sync") == 1
+
+    assert "vorssaint/vorssaint-utils · no changes" in capsys.readouterr().out
+    assert "acme__widgets.db: boom" in caplog.text
+    assert "1 of 2 repositories not synced" in caplog.text
 
 
 # --- list ---------------------------------------------------------------

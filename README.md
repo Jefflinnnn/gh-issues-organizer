@@ -91,6 +91,24 @@ triage add https://github.com/vorssaint/vorssaint-utils
 `add` accepts a GitHub link (with or without `/issues` or `.git`), an SSH
 remote such as `git@github.com:owner/name.git`, or `owner/name`.
 
+Fetch what changed since you last looked: issues that were created, edited,
+commented on, closed or reopened. With no argument it syncs every tracked
+repository; give one to sync only it:
+
+```bash
+triage sync
+triage sync vorssaint/vorssaint-utils
+```
+
+```
+vorssaint/vorssaint-utils · 2 new · 1 closed · 4 updated · 889 open on GitHub
+```
+
+`sync` picks up where the stored issues leave off, so it is safe to run as
+often as you like, and a run with no changes costs one request. Issues that
+were already open when you ran `add` but are older than its `--limit` are not
+back-filled.
+
 Show tracked repositories:
 
 ```bash
@@ -110,15 +128,16 @@ triage remove vorssaint/vorssaint-utils
 ```
 
 Run `triage --help` for the command list, and `triage <command> --help`
-(or `-h`) for a command's arguments, options and examples. Shared options such as `-v` work before or after the command
-(`triage -v add ...` or `triage add -v ...`).
+(or `-h`) for a command's arguments, options and examples. Shared options
+such as `-v` work before or after the command (`triage -v add ...` or
+`triage add -v ...`).
 
 Options:
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--limit N` (add) | 10 | Open issues to fetch, 1 to 100 |
-| `--comments N` (add) | 3 | Latest comments kept per issue |
+| `--comments N` (add, sync) | 3 | Latest comments kept per fetched issue |
 | `--yes` (remove) | off | Delete without asking |
 | `--data-dir PATH` | `.cache` | Folder holding the cache files |
 | `-v` | off | Show debug logs |
@@ -144,7 +163,7 @@ eval "$(triage completion zsh)"
 
 Completion works in zsh and bash; open a new terminal after setting it up.
 Press Tab after `triage ` to complete a command, or after `triage remove `
-to complete a tracked repository's name. Press Tab again to cycle through
+or `triage sync ` to complete a tracked repository's name. Press Tab again to cycle through
 the matches; in bash, cycling needs `bind 'TAB:menu-complete'`. Completion
 lists the repositories tracked in the current folder, the same ones
 `triage list --names` prints.

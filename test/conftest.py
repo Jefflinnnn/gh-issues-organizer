@@ -7,6 +7,7 @@ token.
 """
 
 import copy
+import dataclasses
 import json
 import pathlib
 from collections.abc import Callable
@@ -55,6 +56,49 @@ def fake_github(
     monkeypatch.setattr(github_api, "load_token", lambda: "test-token")
     monkeypatch.setattr(github_api, "fetch_open_issues", fetch)
     return requested
+
+
+@dataclasses.dataclass
+class FakeSync:
+    """What the fake GitHub serves to ``sync`` and what it was asked for.
+
+    Attributes:
+        issues: The changed issues the next sync receives.
+        requests: One ``(owner/name, since)`` pair per sync request.
+    """
+
+    issues: list[github_api.Issue] = dataclasses.field(default_factory=list)
+    requests: list[tuple[str, str]] = dataclasses.field(default_factory=list)
+
+
+@pytest.fixture
+def fake_sync(
+    monkeypatch: pytest.MonkeyPatch, fetch_result: github_api.FetchResult
+) -> FakeSync:
+    """Serves ``sync`` the issues set on the returned object."""
+    served = FakeSync()
+
+    def fetch(
+        repo: repo_ref.RepoRef, since: str, comments: int, token: str
+    ) -> github_api.FetchResult:
+        served.requests.append((repo.full_name, since))
+        repository = fetch_result.repository
+        if repo.full_name != repository.name_with_owner:
+            repository = github_api.Repository(
+                id=f"R_{repo.name}",
+                name_with_owner=repo.full_name,
+                url=f"https://github.com/{repo.full_name}",
+            )
+        return dataclasses.replace(
+            fetch_result,
+            repository=repository,
+            issues=served.issues,
+            total_open=887,
+        )
+
+    monkeypatch.setattr(github_api, "load_token", lambda: "test-token")
+    monkeypatch.setattr(github_api, "fetch_changed_issues", fetch)
+    return served
 
 
 @pytest.fixture

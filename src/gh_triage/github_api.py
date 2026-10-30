@@ -18,17 +18,7 @@ REQUEST_TIMEOUT_S = 30
 # GraphQL caps any connection at 100 nodes per request.
 MAX_PAGE_SIZE = 100
 
-ISSUES_QUERY = """
-query($owner: String!, $name: String!, $limit: Int!, $comments: Int!) {
-  rateLimit { cost remaining resetAt }
-  repository(owner: $owner, name: $name) {
-    id
-    nameWithOwner
-    url
-    issues(first: $limit, states: OPEN,
-           orderBy: {field: UPDATED_AT, direction: DESC}) {
-      totalCount
-      nodes {
+_ISSUE_FIELDS = """
         id
         number
         title
@@ -54,11 +44,51 @@ query($owner: String!, $name: String!, $limit: Int!, $comments: Int!) {
             body
           }
         }
-      }
+"""
+
+ISSUES_QUERY = (
+    """
+query($owner: String!, $name: String!, $limit: Int!, $comments: Int!) {
+  rateLimit { cost remaining resetAt }
+  repository(owner: $owner, name: $name) {
+    id
+    nameWithOwner
+    url
+    issues(first: $limit, states: OPEN,
+           orderBy: {field: UPDATED_AT, direction: DESC}) {
+      totalCount
+      nodes {"""
+    + _ISSUE_FIELDS
+    + """      }
     }
   }
 }
 """
+)
+
+# Open and closed issues changed since a time, oldest change first, so a
+# page that is cut short can be continued from its last issue.
+CHANGED_ISSUES_QUERY = (
+    """
+query($owner: String!, $name: String!, $since: DateTime!, $comments: Int!,
+      $pageSize: Int!, $after: String) {
+  rateLimit { cost remaining resetAt }
+  repository(owner: $owner, name: $name) {
+    id
+    nameWithOwner
+    url
+    openIssues: issues(states: OPEN) { totalCount }
+    issues(first: $pageSize, after: $after, filterBy: {since: $since},
+           orderBy: {field: UPDATED_AT, direction: ASC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes {"""
+    + _ISSUE_FIELDS
+    + """      }
+    }
+  }
+}
+"""
+)
 
 
 VIEWER_QUERY = """
@@ -172,6 +202,21 @@ class FetchResult:
 
 
 @dataclasses.dataclass(frozen=True)
+class ChangedPage:
+    """One page of issues changed since a time.
+
+    Attributes:
+        fetch: The page's repository and issues.
+        end_cursor: Pass as ``after`` to get the next page.
+        has_next_page: Whether GitHub has more changed issues.
+    """
+
+    fetch: FetchResult
+    end_cursor: str | None
+    has_next_page: bool
+
+
+@dataclasses.dataclass(frozen=True)
 class TokenStatus:
     """What GitHub reports about a working token.
 
@@ -258,6 +303,60 @@ def fetch_open_issues(
     return parse_issues_response(payload, repo)
 
 
+def fetch_changed_issues(
+    repo: repo_ref.RepoRef, since: str, comments: int, token: str
+) -> FetchResult:
+    """Fetches every issue created, changed or closed since a time.
+
+    Follows GitHub's pages until none are left, so nothing is skipped.
+
+    Args:
+        repo: The repository to read.
+        since: ISO 8601 time; issues updated at or after it are returned.
+        comments: How many of each issue's latest comments to include.
+        token: A GitHub token that can read the repository.
+
+    Returns:
+        The changed issues, oldest change first, with the rate-limit cost
+        summed over every request.
+
+    Raises:
+        ValueError: ``comments`` is out of range.
+        GitHubError: A request failed or the repository wasn't found.
+    """
+    if not 0 <= comments <= MAX_PAGE_SIZE:
+        raise ValueError(
+            f"comments must be 0 to {MAX_PAGE_SIZE}, got {comments}"
+        )
+    logger.info("Fetching issues of %s changed since %s", repo.full_name, since)
+    issues: dict[str, Issue] = {}
+    cost = 0
+    after: str | None = None
+    while True:
+        variables = {
+            "owner": repo.owner,
+            "name": repo.name,
+            "since": since,
+            "comments": comments,
+            "pageSize": MAX_PAGE_SIZE,
+            "after": after,
+        }
+        page = parse_changed_response(
+            _post_graphql(CHANGED_ISSUES_QUERY, variables, token), repo
+        )
+        cost += page.fetch.rate_limit_cost
+        # An issue edited while we page moves to the end; keep its newest copy.
+        for issue in page.fetch.issues:
+            issues[issue.id] = issue
+        if not page.has_next_page:
+            return dataclasses.replace(
+                page.fetch,
+                issues=list(issues.values()),
+                rate_limit_cost=cost,
+            )
+        after = page.end_cursor
+
+
 def _post_graphql(
     query: str, variables: dict[str, Any], token: str
 ) -> dict[str, Any]:
@@ -306,6 +405,50 @@ def parse_issues_response(
     Raises:
         GitHubError: The response holds errors or no repository.
     """
+    data, repository = _checked_repository(payload, repo)
+    issues_connection = repository["issues"]
+    return _fetch_result(
+        data,
+        repository,
+        issues_connection["nodes"],
+        issues_connection["totalCount"],
+    )
+
+
+def parse_changed_response(
+    payload: dict[str, Any], repo: repo_ref.RepoRef
+) -> ChangedPage:
+    """Converts a ``CHANGED_ISSUES_QUERY`` response body into a page.
+
+    Args:
+        payload: The decoded JSON body.
+        repo: The repository that was requested, for error messages.
+
+    Returns:
+        The parsed page.
+
+    Raises:
+        GitHubError: The response holds errors or no repository.
+    """
+    data, repository = _checked_repository(payload, repo)
+    issues_connection = repository["issues"]
+    page_info = issues_connection["pageInfo"]
+    return ChangedPage(
+        fetch=_fetch_result(
+            data,
+            repository,
+            issues_connection["nodes"],
+            repository["openIssues"]["totalCount"],
+        ),
+        end_cursor=page_info["endCursor"],
+        has_next_page=page_info["hasNextPage"],
+    )
+
+
+def _checked_repository(
+    payload: dict[str, Any], repo: repo_ref.RepoRef
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Returns a response's data and repository, raising on any error."""
     errors = payload.get("errors") or []
     if any(error.get("type") == "NOT_FOUND" for error in errors):
         raise GitHubError(
@@ -320,8 +463,16 @@ def parse_issues_response(
     repository = data.get("repository")
     if repository is None:
         raise GitHubError(f"GitHub returned no data for {repo.full_name}")
+    return data, repository
 
-    issues_connection = repository["issues"]
+
+def _fetch_result(
+    data: dict[str, Any],
+    repository: dict[str, Any],
+    nodes: list[dict[str, Any]],
+    total_open: int,
+) -> FetchResult:
+    """Builds a FetchResult from the parts both queries share."""
     rate_limit = data["rateLimit"]
     return FetchResult(
         repository=Repository(
@@ -329,8 +480,8 @@ def parse_issues_response(
             name_with_owner=repository["nameWithOwner"],
             url=repository["url"],
         ),
-        issues=[_parse_issue(node) for node in issues_connection["nodes"]],
-        total_open=issues_connection["totalCount"],
+        issues=[_parse_issue(node) for node in nodes],
+        total_open=total_open,
         rate_limit_cost=rate_limit["cost"],
         rate_limit_remaining=rate_limit["remaining"],
     )
