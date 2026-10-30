@@ -70,3 +70,15 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 CI (`.github/workflows/ci.yml`) runs on every PR and must pass before merge:
 secret scanning, Ruff lint + format check, and — once `pyproject.toml`
 exists — mypy and pytest. Run the same checks locally before pushing.
+
+## Tests
+
+- Tests live in `test/`, named `test_*.py`, and run with pytest.
+- `test/test_repo_guardrails.py` checks the repo's own guardrails
+  (ignored secrets, Claude deny rules, CLAUDE.md sections, CI triggers).
+  Update it when you intentionally change those files; never weaken a test
+  just to make it pass.
+- New code ships with tests in the same PR. Test behavior, not
+  implementation details, and don't mock the thing under test.
+- Run before pushing: `uvx --with pyyaml pytest test`
+  (becomes `uv run pytest` once `pyproject.toml` exists).
