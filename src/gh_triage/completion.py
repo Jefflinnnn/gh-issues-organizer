@@ -1,9 +1,12 @@
-"""Shell completion scripts for ``triage``.
+"""Shell completion scripts for ``triage`` and installing them.
 
 The scripts complete command names and, after ``triage remove``, the
 repositories tracked in the current folder. They get those names from
 ``triage list --names`` so the list of tracked repositories has one source.
 """
+
+import pathlib
+from collections.abc import Mapping
 
 BASH_SCRIPT = r"""# bash completion for triage.
 # Load it with: eval "$(triage completion bash)"
@@ -19,12 +22,13 @@ _triage() {
   local IFS=$'\n'
   case $command in
     "")
-      COMPREPLY=($(compgen -W $'add\nlist\nremove\ncompletion' -- "$cur")) ;;
+      COMPREPLY=($(compgen -W $'setup\nadd\nlist\nremove\ncompletion' \
+        -- "$cur")) ;;
     remove)
       COMPREPLY=($(compgen -W "$(triage list --names 2>/dev/null)" \
         -- "$cur")) ;;
     completion)
-      COMPREPLY=($(compgen -W $'bash\nzsh' -- "$cur")) ;;
+      COMPREPLY=($(compgen -W $'bash\nzsh\ninstall' -- "$cur")) ;;
   esac
 }
 complete -o default -F _triage triage
@@ -39,10 +43,11 @@ _triage() {
   local -a commands repos
   local command="" i
   commands=(
+    'setup:check your GitHub token and turn on Tab completion'
     'add:track a repository and fetch its open issues'
     'list:show tracked repositories'
     'remove:stop tracking a repository and delete its data'
-    'completion:print a shell completion script'
+    'completion:turn on Tab completion or print its script'
   )
   for (( i = 2; i < CURRENT; i++ )); do
     case ${words[i]} in
@@ -58,10 +63,89 @@ _triage() {
       repos=(${(f)"$(triage list --names 2>/dev/null)"})
       compadd -a repos ;;
     completion)
-      compadd bash zsh ;;
+      compadd bash zsh install ;;
   esac
 }
 compdef _triage triage
 """
 
 SCRIPTS = {"bash": BASH_SCRIPT, "zsh": ZSH_SCRIPT}
+
+# Written above the eval line so users can tell where it came from.
+MARKER = "# triage: Tab completion"
+
+
+def detect_shell(environ: Mapping[str, str]) -> str | None:
+    """Returns the user's shell if completion supports it.
+
+    Args:
+        environ: Environment variables; ``SHELL`` is read.
+
+    Returns:
+        ``"bash"`` or ``"zsh"``, or None for any other or unset shell.
+    """
+    shell = pathlib.PurePath(environ.get("SHELL", "")).name
+    return shell if shell in SCRIPTS else None
+
+
+def startup_file(
+    shell: str, environ: Mapping[str, str], home: pathlib.Path
+) -> pathlib.Path:
+    """Returns the startup file a new interactive shell reads.
+
+    Args:
+        shell: ``"bash"`` or ``"zsh"``.
+        environ: Environment variables; zsh honors ``ZDOTDIR``.
+        home: The user's home folder.
+
+    Returns:
+        ``~/.zshrc`` (or ``$ZDOTDIR/.zshrc``) for zsh, ``~/.bashrc`` for
+        bash.
+    """
+    if shell == "zsh":
+        return pathlib.Path(environ.get("ZDOTDIR") or home) / ".zshrc"
+    return home / ".bashrc"
+
+
+def setup_lines(shell: str) -> str:
+    """Returns the lines that turn on completion in a startup file.
+
+    Args:
+        shell: ``"bash"`` or ``"zsh"``.
+
+    Returns:
+        The marker comment and the eval line, newline-terminated.
+    """
+    return f'{MARKER}\neval "$(triage completion {shell})"\n'
+
+
+def is_installed(path: pathlib.Path, shell: str) -> bool:
+    """Returns whether a startup file already loads triage completion.
+
+    Args:
+        path: The startup file; it may not exist.
+        shell: ``"bash"`` or ``"zsh"``.
+
+    Returns:
+        True if the file mentions ``triage completion <shell>``.
+    """
+    if not path.is_file():
+        return False
+    return f"triage completion {shell}" in path.read_text(encoding="utf-8")
+
+
+def install(path: pathlib.Path, shell: str) -> None:
+    """Appends the completion lines to a startup file, creating it if needed.
+
+    Args:
+        path: The startup file.
+        shell: ``"bash"`` or ``"zsh"``.
+    """
+    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    separator = "" if not existing or existing.endswith("\n") else "\n"
+    with path.open("a", encoding="utf-8") as startup:
+        startup.write(
+            f"{separator}\n{setup_lines(shell)}"
+            if existing
+            else setup_lines(shell)
+        )

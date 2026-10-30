@@ -52,6 +52,30 @@ editor rather than `echo`, so the token doesn't land in your shell history.
 Git ignores `.env`, so the token never gets committed. A `GITHUB_TOKEN`
 environment variable, if set, takes priority over the file.
 
+### 4. Run setup
+
+```bash
+triage setup
+```
+
+Setup checks that GitHub accepts your token, then asks whether to turn on
+Tab completion (it shows the two lines it would add to `~/.zshrc` or
+`~/.bashrc`). Say no if you'd rather not; you can turn it on later. Running
+setup again is safe: finished steps are skipped.
+
+```text
+GitHub token: works for your-login (4,999 of 5,000 requests left this hour).
+Turn on Tab completion for zsh? This adds 2 lines to ~/.zshrc:
+
+  # triage: Tab completion
+  eval "$(triage completion zsh)"
+
+[y/N] y
+Tab completion: added to ~/.zshrc. Open a new terminal to use it.
+
+Ready. Try: triage add https://github.com/<owner>/<repo>
+```
+
 ## Usage
 
 Run `triage` from the project folder. It reads `.env` and keeps its data
@@ -101,16 +125,20 @@ tables on first use; nothing needs setting up. Git ignores `.cache/`.
 
 ## Tab completion
 
-Add one line to your shell's startup file, then open a new terminal:
+`triage setup` offers Tab completion. If you skipped it, turn it on any
+time; it asks before editing your startup file:
 
 ```bash
-# zsh: ~/.zshrc
-eval "$(triage completion zsh)"
-
-# bash: ~/.bashrc
-eval "$(triage completion bash)"
+triage completion install
 ```
 
+Or add the line to `~/.zshrc` (or `~/.bashrc` with `bash`) yourself:
+
+```bash
+eval "$(triage completion zsh)"
+```
+
+Completion works in zsh and bash; open a new terminal after setting it up.
 Press Tab after `triage ` to complete a command, or after `triage remove `
 to complete a tracked repository's name. Press Tab again to cycle through
 the matches; in bash, cycling needs `bind 'TAB:menu-complete'`. Completion
@@ -121,7 +149,7 @@ lists the repositories tracked in the current folder, the same ones
 
 | Message | Fix |
 | --- | --- |
-| `No GitHub token found` | Create `.env` as in setup step 3. |
+| `No GitHub token found` | Create `.env` as in setup step 3, then run `triage setup`. |
 | `GitHub rejected the token (HTTP 401)` | The token is mistyped or expired; generate a new one. |
 | `Repository ... not found` | Check the spelling. Private repos need a token with access to them. |
 | `... is already tracked` | The repository already has a cache file; see `triage list`. |

@@ -61,6 +61,14 @@ query($owner: String!, $name: String!, $limit: Int!, $comments: Int!) {
 """
 
 
+VIEWER_QUERY = """
+query {
+  viewer { login }
+  rateLimit { limit remaining }
+}
+"""
+
+
 class GitHubError(RuntimeError):
     """Raised when GitHub can't return the requested data."""
 
@@ -163,6 +171,21 @@ class FetchResult:
     rate_limit_remaining: int
 
 
+@dataclasses.dataclass(frozen=True)
+class TokenStatus:
+    """What GitHub reports about a working token.
+
+    Attributes:
+        login: The account the token belongs to.
+        limit: GraphQL points allowed per hour.
+        remaining: GraphQL points left in the current hour.
+    """
+
+    login: str
+    limit: int
+    remaining: int
+
+
 def load_token(env_file: pathlib.Path | None = None) -> str:
     """Returns the GitHub token from the environment or a ``.env`` file.
 
@@ -185,8 +208,8 @@ def load_token(env_file: pathlib.Path | None = None) -> str:
         token = _read_env_value(env_file, "GITHUB_TOKEN")
     if not token:
         raise GitHubError(
-            "No GitHub token found. Set GITHUB_TOKEN in a .env file in this "
-            "folder (see .env.example and the README)."
+            "No GitHub token found. Run 'triage setup' to get started, or "
+            "set GITHUB_TOKEN in a .env file in this folder (see the README)."
         )
     return token
 
@@ -350,3 +373,42 @@ def _parse_issue(node: dict[str, Any]) -> Issue:
 def _login(author: dict[str, Any] | None) -> str | None:
     """Returns an author's login; GitHub sends null for deleted accounts."""
     return author["login"] if author else None
+
+
+def check_token(token: str) -> TokenStatus:
+    """Confirms a token works with one cheap GraphQL request.
+
+    Args:
+        token: The GitHub token to check.
+
+    Returns:
+        The token's account and rate limit.
+
+    Raises:
+        GitHubError: GitHub rejected the token or couldn't be reached.
+    """
+    return parse_viewer_response(_post_graphql(VIEWER_QUERY, {}, token))
+
+
+def parse_viewer_response(payload: dict[str, Any]) -> TokenStatus:
+    """Converts a ``VIEWER_QUERY`` response body into a TokenStatus.
+
+    Args:
+        payload: The decoded JSON body.
+
+    Returns:
+        The parsed status.
+
+    Raises:
+        GitHubError: The response holds errors.
+    """
+    errors = payload.get("errors") or []
+    if errors:
+        messages = "; ".join(str(error.get("message")) for error in errors)
+        raise GitHubError(f"GitHub returned errors: {messages}")
+    data = payload["data"]
+    return TokenStatus(
+        login=data["viewer"]["login"],
+        limit=data["rateLimit"]["limit"],
+        remaining=data["rateLimit"]["remaining"],
+    )
