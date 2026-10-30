@@ -1,4 +1,4 @@
-"""Command-line entry point: ``triage add`` and ``triage list``."""
+"""Command-line entry point for the ``triage`` commands."""
 
 import argparse
 import logging
@@ -48,11 +48,28 @@ class AlreadyTrackedError(RuntimeError):
     """Raised when ``add`` is given a repository that is already tracked."""
 
 
+class NotTrackedError(RuntimeError):
+    """Raised when a command needs a repository that isn't tracked."""
+
+
+class ConfirmationRequiredError(RuntimeError):
+    """Raised when a destructive command can't ask for confirmation."""
+
+
+_COMMAND_ERRORS = (
+    *_USER_ERRORS,
+    AlreadyTrackedError,
+    NotTrackedError,
+    ConfirmationRequiredError,
+)
+
+
 _MAIN_EXAMPLES = """\
 examples:
   triage add https://github.com/vorssaint/vorssaint-utils
   triage add vorssaint/vorssaint-utils --limit 25
   triage list
+  triage remove vorssaint/vorssaint-utils
   triage add -v vorssaint/vorssaint-utils    (show debug logs)
 
 Run triage from the project folder: it reads .env and .cache/ there.
@@ -74,6 +91,14 @@ examples:
 _LIST_EXAMPLES = """\
 example:
   triage list
+"""
+
+_REMOVE_EXAMPLES = """\
+Deletes the repository's cache file. To track it again, run triage add.
+
+examples:
+  triage remove vorssaint/vorssaint-utils
+  triage remove https://github.com/vorssaint/vorssaint-utils --yes
 """
 
 
@@ -100,7 +125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     try:
         args.handler(args)
-    except (*_USER_ERRORS, AlreadyTrackedError) as error:
+    except _COMMAND_ERRORS as error:
         logger.error("%s", error)
         logger.debug("Details:", exc_info=True)
         return 1
@@ -197,6 +222,22 @@ def _build_parser() -> argparse.ArgumentParser:
         parents=[command_options],
     )
     list_command.set_defaults(handler=_run_list)
+
+    remove = commands.add_parser(
+        "remove",
+        help="stop tracking a repository and delete its data",
+        description="Stop tracking a repository and delete its cache file.",
+        epilog=_REMOVE_EXAMPLES,
+        formatter_class=formatter,
+        parents=[command_options],
+    )
+    remove.add_argument(
+        "repo", metavar="REPO", help="GitHub link or owner/name"
+    )
+    remove.add_argument(
+        "-y", "--yes", action="store_true", help="skip the confirmation"
+    )
+    remove.set_defaults(handler=_run_remove)
     return parser
 
 
@@ -281,3 +322,55 @@ def _run_list(args: argparse.Namespace) -> None:
                 for cell, width in zip(row, widths, strict=True)
             )
         )
+
+
+def _run_remove(args: argparse.Namespace) -> None:
+    """Deletes a tracked repository's cache file after confirmation."""
+    requested = repo_ref.parse(args.repo)
+    data_dir: pathlib.Path = args.data_dir
+    path = data_dir / requested.db_filename
+    if not path.exists():
+        raise NotTrackedError(
+            f"{requested.full_name} is not tracked. See: triage list"
+        )
+
+    try:
+        summary = store.summarize(path)
+        name = summary.name_with_owner
+        what = f"{name} and its {summary.open_issues} stored issues"
+    except (store.StoreError, sqlite3.DatabaseError):
+        # An unreadable file must still be removable.
+        logger.debug("Couldn't read %s", path, exc_info=True)
+        name = requested.full_name
+        what = f"{name} (its cache file can't be read)"
+
+    question = (
+        f"Remove {what}? You'll need 'triage add' to track it again. [y/N] "
+    )
+    if not args.yes and not _confirm(question):
+        print("Nothing removed.")
+        return
+    path.unlink()
+    print(f"Removed {name} ({path})")
+
+
+def _confirm(question: str) -> bool:
+    """Asks a yes/no question on the terminal; anything but yes is no.
+
+    Args:
+        question: The prompt, shown on stderr so stdout stays the report.
+
+    Returns:
+        True if the user answered y or yes.
+
+    Raises:
+        ConfirmationRequiredError: stdin isn't a terminal, so nobody can
+            answer.
+    """
+    if not sys.stdin.isatty():
+        raise ConfirmationRequiredError(
+            "Can't ask for confirmation without a terminal; rerun with --yes."
+        )
+    sys.stderr.write(question)
+    sys.stderr.flush()
+    return sys.stdin.readline().strip().lower() in ("y", "yes")
