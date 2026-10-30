@@ -6,6 +6,7 @@ import pathlib
 import sqlite3
 import sys
 from collections.abc import Sequence
+from typing import NoReturn
 
 from gh_triage import github_api
 from gh_triage import repo_ref
@@ -26,8 +27,54 @@ _USER_ERRORS = (
 )
 
 
+class _Parser(argparse.ArgumentParser):
+    """An ArgumentParser whose usage errors point to the examples."""
+
+    def error(self, message: str) -> NoReturn:
+        """Prints the usage line, the error and where to find examples.
+
+        Args:
+            message: argparse's description of what was wrong.
+        """
+        self.print_usage(sys.stderr)
+        self.exit(
+            2,
+            f"{self.prog}: error: {message}\n"
+            f"Run '{self.prog} -h' for examples.\n",
+        )
+
+
 class AlreadyTrackedError(RuntimeError):
     """Raised when ``add`` is given a repository that is already tracked."""
+
+
+_MAIN_EXAMPLES = """\
+examples:
+  triage add https://github.com/vorssaint/vorssaint-utils
+  triage add vorssaint/vorssaint-utils --limit 25
+  triage list
+  triage add -v vorssaint/vorssaint-utils    (show debug logs)
+
+Run triage from the project folder: it reads .env and .cache/ there.
+Run 'triage COMMAND -h' for a command's options.
+"""
+
+_ADD_EXAMPLES = """\
+REPO can be any of:
+  https://github.com/vorssaint/vorssaint-utils
+  https://github.com/vorssaint/vorssaint-utils/issues
+  git@github.com:vorssaint/vorssaint-utils.git
+  vorssaint/vorssaint-utils
+
+examples:
+  triage add https://github.com/vorssaint/vorssaint-utils
+  triage add vorssaint/vorssaint-utils --limit 25 --comments 5
+"""
+
+_LIST_EXAMPLES = """\
+example:
+  triage list
+"""
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -38,9 +85,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             ``sys.argv[1:]``.
 
     Returns:
-        The process exit code: 0 on success, 1 on a handled error.
+        The process exit code: 0 on success, 1 on a handled error, 2 when
+        no command was given.
     """
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    if args.command is None:
+        parser.print_help()
+        return 2
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(levelname)s %(name)s: %(message)s",
@@ -55,46 +107,95 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    """Defines the commands and their flags."""
-    parser = argparse.ArgumentParser(
-        prog="triage",
-        description="Triage a GitHub repository's open issues.",
+def _shared_options(*, suppress_defaults: bool) -> _Parser:
+    """Returns a parent parser with the options every command accepts.
+
+    The options are added both before and after the command name, so
+    ``triage -v add ...`` and ``triage add -v ...`` both work.
+
+    Args:
+        suppress_defaults: True for the copy attached to each command, so
+            an option left out after the command doesn't overwrite the
+            value given before it.
+
+    Returns:
+        A parser to pass as ``parents=[...]``.
+    """
+    shared = _Parser(add_help=False)
+    group = shared.add_argument_group("shared options")
+    group.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=argparse.SUPPRESS if suppress_defaults else False,
+        help="show debug logs on stderr",
     )
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="show debug logs"
-    )
-    parser.add_argument(
+    group.add_argument(
         "--data-dir",
         type=pathlib.Path,
-        default=DEFAULT_DATA_DIR,
-        help="folder holding one cache file per repo (default: %(default)s)",
+        metavar="PATH",
+        default=argparse.SUPPRESS if suppress_defaults else DEFAULT_DATA_DIR,
+        help="folder with one cache file per repo "
+        f"(default: {DEFAULT_DATA_DIR})",
+    )
+    return shared
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Defines the commands and their flags."""
+    formatter = argparse.RawDescriptionHelpFormatter
+    command_options = _shared_options(suppress_defaults=True)
+    parser = _Parser(
+        prog="triage",
+        description="Track GitHub repositories and store their open issues "
+        "locally for triage.",
+        epilog=_MAIN_EXAMPLES,
+        formatter_class=formatter,
+        parents=[_shared_options(suppress_defaults=False)],
     )
     commands = parser.add_subparsers(
-        title="commands", dest="command", required=True
+        title="commands", dest="command", metavar="COMMAND"
     )
 
     add = commands.add_parser(
-        "add", help="track a repository and fetch its open issues"
+        "add",
+        help="track a repository and fetch its open issues",
+        description="Track a repository: fetch its most recently updated "
+        "open issues into .cache/<owner>__<name>.db.",
+        epilog=_ADD_EXAMPLES,
+        formatter_class=formatter,
+        parents=[command_options],
     )
     add.add_argument(
-        "repo", help="GitHub link or owner/name, e.g. vorssaint/vorssaint-utils"
+        "repo",
+        metavar="REPO",
+        help="GitHub link or owner/name (forms listed below)",
     )
     add.add_argument(
         "--limit",
         type=int,
+        metavar="N",
         default=DEFAULT_LIMIT,
         help="open issues to fetch, 1-100 (default: %(default)s)",
     )
     add.add_argument(
         "--comments",
         type=int,
+        metavar="N",
         default=DEFAULT_COMMENTS,
         help="latest comments to keep per issue (default: %(default)s)",
     )
     add.set_defaults(handler=_run_add)
 
-    list_command = commands.add_parser("list", help="show tracked repositories")
+    list_command = commands.add_parser(
+        "list",
+        help="show tracked repositories",
+        description="Show each tracked repository, how many issues are "
+        "stored, and when it was last synced.",
+        epilog=_LIST_EXAMPLES,
+        formatter_class=formatter,
+        parents=[command_options],
+    )
     list_command.set_defaults(handler=_run_list)
     return parser
 

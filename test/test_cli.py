@@ -133,3 +133,64 @@ def test_list_shows_tracked_repositories(
     header, row = capsys.readouterr().out.splitlines()
     assert header.split()[0] == "REPO"
     assert row.split()[:3] == ["vorssaint/vorssaint-utils", "3", "887"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["-v", "add", "vorssaint/vorssaint-utils"],
+        ["add", "-v", "vorssaint/vorssaint-utils"],
+        ["add", "vorssaint/vorssaint-utils", "-v"],
+    ],
+)
+@pytest.mark.usefixtures("fake_github")
+def test_shared_options_work_before_or_after_the_command(
+    tmp_path: pathlib.Path, args: list[str]
+) -> None:
+    assert cli.main(["--data-dir", str(tmp_path), *args]) == 0
+    assert [p.name for p in tmp_path.iterdir()] == [DB_NAME]
+
+
+@pytest.mark.usefixtures("fake_github")
+def test_data_dir_after_the_command_is_used(tmp_path: pathlib.Path) -> None:
+    exit_code = cli.main(
+        ["add", "vorssaint/vorssaint-utils", "--data-dir", str(tmp_path)]
+    )
+
+    assert exit_code == 0
+    assert [p.name for p in tmp_path.iterdir()] == [DB_NAME]
+
+
+def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main([]) == 2
+    output = capsys.readouterr().out
+    assert "usage: triage" in output
+    assert "triage add https://github.com/" in output
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["-h"], "examples:"),
+        (["add", "-h"], "git@github.com:"),
+        (["list", "-h"], "triage list"),
+    ],
+)
+def test_help_shows_examples(
+    args: list[str], expected: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(args)
+
+    assert exit_info.value.code == 0
+    assert expected in capsys.readouterr().out
+
+
+def test_missing_repo_points_to_examples(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["add"])
+
+    assert exit_info.value.code == 2
+    assert "Run 'triage add -h' for examples." in capsys.readouterr().err

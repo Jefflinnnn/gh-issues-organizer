@@ -73,6 +73,10 @@ Show tracked repositories:
 triage list
 ```
 
+Run `triage -h`, `triage add -h` or `triage list -h` for options and
+examples. Shared options such as `-v` work before or after the command
+(`triage -v add ...` or `triage add -v ...`).
+
 Options:
 
 | Flag | Default | Meaning |
