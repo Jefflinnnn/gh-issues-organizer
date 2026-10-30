@@ -97,6 +97,10 @@ Show tracked repositories:
 triage list
 ```
 
+Times show in your computer's timezone (for example `2026-10-29 22:18 PDT`).
+The cache stores them in UTC, like GitHub does; set `TZ` to view another
+zone, e.g. `TZ=UTC triage list`.
+
 Stop tracking a repository and delete its cache file. `triage` asks for
 confirmation first; `--yes` skips the question. To track it again, run
 `triage add`.
