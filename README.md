@@ -17,8 +17,13 @@ issues in a local SQLite file. Tagging and the triage report come later.
 ```bash
 git clone https://github.com/Jefflinnnn/gh-issues-organizer.git
 cd gh-issues-organizer
-uv sync
+uv tool install --editable .
 ```
+
+This puts a `triage` command on your PATH. `--editable` runs the code in
+this folder, so a `git pull` takes effect without reinstalling. If your
+shell can't find `triage`, run `uv tool update-shell` and open a new
+terminal.
 
 ### 2. Create a read-only GitHub token
 
@@ -49,10 +54,14 @@ environment variable, if set, takes priority over the file.
 
 ## Usage
 
+Run `triage` from the project folder. It reads `.env` and keeps its data
+in `.cache/` relative to the folder you run it in, so from another folder
+it won't find your token or your tracked repositories.
+
 Track a repository and fetch its 10 most recently updated open issues:
 
 ```bash
-uv run triage add https://github.com/vorssaint/vorssaint-utils
+triage add https://github.com/vorssaint/vorssaint-utils
 ```
 
 `add` accepts a GitHub link (with or without `/issues` or `.git`), an SSH
@@ -61,7 +70,7 @@ remote such as `git@github.com:owner/name.git`, or `owner/name`.
 Show tracked repositories:
 
 ```bash
-uv run triage list
+triage list
 ```
 
 Options:
@@ -89,6 +98,7 @@ tables on first use; nothing needs setting up. Git ignores `.cache/`.
 ## Development
 
 ```bash
+uv sync
 uv run ruff check . && uv run ruff format --check .
 uv run mypy .
 uv run pytest
