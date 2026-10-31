@@ -5,8 +5,10 @@ import datetime
 import logging
 import os
 import pathlib
+import shutil
 import sqlite3
 import sys
+import textwrap
 from collections.abc import Callable
 from collections.abc import Sequence
 
@@ -25,8 +27,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_DATA_DIR = pathlib.Path(".cache")
 DEFAULT_LIMIT = 10
 DEFAULT_COMMENTS = 3
-# Long titles are cut so each issue fits on one line of the run report.
-TITLE_WIDTH = 60
+# Narrowest a wrapped column gets, however many columns come before it.
+MIN_WRAP_WIDTH = 20
 
 # Errors a user can fix; they get a one-line message instead of a traceback.
 _USER_ERRORS = (
@@ -121,9 +123,13 @@ Flags:
 
 Tags from the model (bug, enhancement, ...) come in a later version.
 
+Titles wrap to the terminal's width. Output piped to another program keeps
+one line per issue.
+
 Examples:
   triage run vorssaint/vorssaint-utils
   triage run vorssaint/vorssaint-utils --stale-days 90
+  triage run vorssaint/vorssaint-utils --limit 20
 """
 
 _LIST_EPILOG = """\
@@ -388,6 +394,12 @@ def _build_parser() -> help_format.Parser:
         help="Days without human activity before an issue is stale "
         "(default: %(default)s)",
     )
+    run.add_argument(
+        "--limit",
+        type=_positive_int,
+        metavar="<n>",
+        help="Show only the first <n> issues (default: all)",
+    )
     run.set_defaults(handler=_run_triage)
 
     list_command = _add_command(
@@ -618,37 +630,55 @@ def _run_triage(args: argparse.Namespace) -> None:
         for flag in (taxonomy.Flag.STALE, taxonomy.Flag.HOT)
     ]
     print(f"{name} · {len(results)} open issues · " + " · ".join(counts))
+    shown = results[: args.limit]
     rows = [("ISSUE", "FLAGS", "IDLE", "ENGAGEMENT", "TITLE")]
-    for result in results:
+    for result in shown:
         rows.append(
             (
                 f"#{result.issue.number}",
                 ", ".join(flag.value for flag in result.flags) or "-",
                 f"{result.idle_days}d",
                 str(result.engagement),
-                _shorten(result.issue.title, TITLE_WIDTH),
+                result.issue.title,
             )
         )
-    _print_table(rows)
+    # Piped output stays one line per issue, so scripts can read it.
+    width = shutil.get_terminal_size().columns if sys.stdout.isatty() else None
+    _print_table(rows, wrap_width=width)
+    if len(shown) < len(results):
+        print(
+            f"Showing {len(shown)} of {len(results)} issues; drop --limit "
+            "to see them all."
+        )
 
 
-def _shorten(text: str, width: int) -> str:
-    """Cuts text to ``width`` characters, ending with "..." if cut."""
-    return text if len(text) <= width else text[: width - 3] + "..."
+def _print_table(
+    rows: Sequence[Sequence[str]], wrap_width: int | None = None
+) -> None:
+    """Prints rows as left-aligned columns, the first row as the header.
 
-
-def _print_table(rows: Sequence[Sequence[str]]) -> None:
-    """Prints rows as left-aligned columns, the first row as the header."""
+    Args:
+        rows: The header row, then the data rows, all the same length.
+        wrap_width: Line width to wrap the last column at, continuing it
+            under itself; None prints each row on one line.
+    """
     widths = [
         max(len(row[column]) for row in rows) for column in range(len(rows[0]))
     ]
+    indent = sum(widths[:-1]) + 2 * (len(widths) - 1)
     for row in rows:
-        print(
-            "  ".join(
-                cell.ljust(width)
-                for cell, width in zip(row, widths, strict=True)
-            ).rstrip()
+        prefix = "  ".join(
+            cell.ljust(width)
+            for cell, width in zip(row[:-1], widths[:-1], strict=True)
         )
+        lines = [row[-1]]
+        if wrap_width is not None:
+            lines = textwrap.wrap(
+                row[-1], max(wrap_width - indent, MIN_WRAP_WIDTH)
+            ) or [""]
+        print(f"{prefix}  {lines[0]}".rstrip())
+        for line in lines[1:]:
+            print(" " * indent + line)
 
 
 def _run_list(args: argparse.Namespace) -> None:
