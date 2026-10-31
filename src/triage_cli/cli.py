@@ -148,8 +148,9 @@ Setup:
 
   Or add them yourself. Open a new terminal afterwards.
 
-Press Tab after "triage " to complete a command, or after "triage remove "
-to complete a repository tracked in the current folder.
+Press Tab after "triage " to complete a command, or after "triage remove ",
+"triage sync " or "triage run " to complete a repository tracked in the
+current folder.
 
 Examples:
   triage completion install
