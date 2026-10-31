@@ -139,19 +139,6 @@ def _changed_page(
     return page
 
 
-def test_parse_changed_response_reads_paging(
-    issues_payload: dict[str, Any],
-) -> None:
-    nodes = issues_payload["data"]["repository"]["issues"]["nodes"]
-    payload = _changed_page(issues_payload, nodes, cursor="abc")
-
-    page = github_api.parse_changed_response(payload, REPO)
-
-    assert (page.has_next_page, page.end_cursor) == (True, "abc")
-    assert len(page.fetch.issues) == 3
-    assert page.fetch.total_open == 887
-
-
 def test_fetch_changed_issues_follows_every_page(
     issues_payload: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -180,6 +167,7 @@ def test_fetch_changed_issues_follows_every_page(
     }
     assert [issue.number for issue in result.issues] == [3267, 3668, 3678]
     assert result.rate_limit_cost == 3
+    assert result.total_open == 887
 
 
 def test_fetch_changed_issues_keeps_the_newest_copy_of_a_repeat(

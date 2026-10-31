@@ -10,6 +10,7 @@ import pathlib
 import subprocess
 
 import pytest
+import yaml
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CLAUDE_SETTINGS_PATH = REPO_ROOT / ".claude" / "settings.json"
@@ -124,7 +125,6 @@ def test_claude_md_has_required_sections(heading: str) -> None:
 
 def test_ci_runs_on_pull_requests_to_main() -> None:
     """CI triggers on every pull request targeting main."""
-    yaml = pytest.importorskip("yaml")
     workflow = yaml.safe_load(CI_WORKFLOW_PATH.read_text(encoding="utf-8"))
     # PyYAML reads the bare key `on` as the boolean True.
     triggers = workflow.get("on", workflow.get(True))
