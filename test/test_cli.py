@@ -3,6 +3,7 @@
 import dataclasses
 import pathlib
 import sqlite3
+import sys
 from collections.abc import Callable
 
 import pytest
@@ -277,6 +278,49 @@ def test_run_caps_the_stale_window_at_the_repositorys_own(
         "Stale after 1 day without human activity; the repository's own "
         ".github/stale.yml caps the window."
     )
+
+
+@pytest.mark.usefixtures("tracked")
+def test_run_wraps_long_titles_on_a_terminal(
+    triage: Triage,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setenv("COLUMNS", "60")
+
+    assert triage("run", "vorssaint/vorssaint-utils") == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert all(len(line) <= 60 for line in lines[2:])
+    title_column = lines[2].index("TITLE")
+    first = next(i for i, line in enumerate(lines) if line.startswith("#3267"))
+    continuation = lines[first + 1]
+    assert continuation[:title_column].strip() == ""
+    assert continuation[title_column] != " "
+
+
+@pytest.mark.usefixtures("tracked")
+def test_run_keeps_one_line_per_issue_when_piped(
+    triage: Triage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert triage("run", "vorssaint/vorssaint-utils") == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 3 + 3
+    assert lines[3].endswith("interface status (like Stats)")
+
+
+@pytest.mark.usefixtures("tracked")
+def test_run_limit_shows_the_first_issues(
+    triage: Triage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert triage("run", "vorssaint/vorssaint-utils", "--limit", "2") == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "· 3 open issues ·" in lines[0]
+    assert [line.split()[0] for line in lines[3:5]] == ["#3267", "#3668"]
+    assert lines[5] == "Showing 2 of 3 issues; drop --limit to see them all."
 
 
 @pytest.mark.usefixtures("tracked")

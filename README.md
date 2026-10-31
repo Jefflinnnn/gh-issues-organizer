@@ -120,7 +120,8 @@ triage run vorssaint/vorssaint-utils
 vorssaint/vorssaint-utils · 3 open issues · 0 stale · 1 hot
 Stale after 60 days without human activity.
 ISSUE  FLAGS  IDLE  ENGAGEMENT  TITLE
-#3267  hot    1d    5           Network module: add connectivity history and interface st...
+#3267  hot    1d    5           Network module: add connectivity history and
+                                interface status (like Stats)
 #3668  -      1d    1           Dynamic Island Hermes Agent
 #3678  -      1d    0           Add Cursor to AI agents view
 ```
@@ -143,6 +144,13 @@ computes two flags each time:
   and says which file it used. Rules limited to some labels don't count.
 - **hot**: in the top 10% of the repository's open issues by reactions plus
   comments, with at least 3.
+
+Long titles wrap to your terminal's width; output piped to another program
+keeps one line per issue. To see only the first few issues:
+
+```bash
+triage run vorssaint/vorssaint-utils --limit 20
+```
 
 `IDLE` is days since the last human activity; `ENGAGEMENT` is reactions plus
 comments. The cache keeps only each issue's latest comments, so if those are
@@ -178,6 +186,7 @@ Options:
 | `--limit N` (add) | 10 | Open issues to fetch, 1 to 100 |
 | `--comments N` (add, sync) | 3 | Latest comments kept per fetched issue |
 | `--stale-days N` (run) | 60 | Days without human activity before an issue is stale |
+| `--limit N` (run) | all | Issues to show in the report |
 | `--yes` (remove) | off | Delete without asking |
 | `--data-dir PATH` | `.cache` | Folder holding the cache files |
 | `-v` | off | Show debug logs |
