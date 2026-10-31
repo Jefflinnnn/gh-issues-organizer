@@ -26,9 +26,9 @@ House style: **Python 3.10+** and the
   code already says. Add comments only to explain *why* (a non-obvious
   decision, constraint, or workaround) or to walk through genuinely complex
   logic. Docstrings are still required as above.
-- Ruff (with the `google` pydocstyle convention) and mypy enforce this once
-  `pyproject.toml` exists; when the guide and the tools disagree, follow
-  the guide and adjust the tool config.
+- Ruff (with the `google` pydocstyle convention) and mypy enforce this;
+  when the guide and the tools disagree, follow the guide and adjust the
+  tool config.
 
 ## Logging
 
@@ -79,8 +79,9 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 ## Checks
 
 CI (`.github/workflows/ci.yml`) runs on every PR and must pass before merge:
-secret scanning, Ruff lint + format check, and — once `pyproject.toml`
-exists — mypy and pytest. Run the same checks locally before pushing.
+secret scanning, Ruff lint + format check, mypy, and pytest. Run the same
+checks locally before pushing:
+`uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest`.
 
 ## Tests
 
@@ -91,5 +92,4 @@ exists — mypy and pytest. Run the same checks locally before pushing.
   just to make it pass.
 - New code ships with tests in the same PR. Test behavior, not
   implementation details, and don't mock the thing under test.
-- Run before pushing: `uvx --with pyyaml pytest test`
-  (becomes `uv run pytest` once `pyproject.toml` exists).
+- Run before pushing: `uv run pytest`.

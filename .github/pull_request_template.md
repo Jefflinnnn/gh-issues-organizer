@@ -23,9 +23,9 @@ Closes #<!-- issue number, or delete this line -->
 Commands you ran and what you checked by hand, so a reviewer can reproduce.
 -->
 
-- [ ] `uv run pytest` (or `uvx --with pyyaml pytest test` before pyproject.toml)
+- [ ] `uv run pytest`
 - [ ] `ruff check` and `ruff format --check`
-- [ ] `mypy` (once configured)
+- [ ] `uv run mypy`
 - [ ] Manual check: <!-- e.g. ran the tool against owner/repo and reviewed the output -->
 
 **Environment:** Python <!-- 3.x -->, OS <!-- macOS / Linux -->, LLM provider/model <!-- if relevant, or n/a -->
