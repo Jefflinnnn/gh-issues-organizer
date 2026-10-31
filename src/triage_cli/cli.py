@@ -119,6 +119,10 @@ Flags:
          comments and label edits don't count
   hot    {_HOT_RULE}
 
+The repository's own stale window caps --stale-days when it is shorter. It
+comes from an actions/stale workflow or .github/stale.yml that applies to
+every issue; triage add and triage sync refresh it.
+
 Tags from the model (bug, enhancement, ...) come in a later version.
 
 Examples:
@@ -598,26 +602,29 @@ def _run_triage(args: argparse.Namespace) -> None:
         )
     connection = store.connect(path)
     try:
-        name = connection.execute(
-            "SELECT name_with_owner FROM repository"
-        ).fetchone()[0]
+        repository = connection.execute(
+            "SELECT name_with_owner, stale_days, stale_source FROM repository"
+        ).fetchone()
         issues = loader.load_open_issues(connection)
     finally:
         connection.close()
 
+    name = repository["name_with_owner"]
     if not issues:
         print(f"{name} · no open issues stored")
         return
+    stale_days = facts.stale_window(args.stale_days, repository["stale_days"])
     results = facts.compute(
         issues,
         now=datetime.datetime.now(datetime.timezone.utc),
-        stale_days=args.stale_days,
+        stale_days=stale_days,
     )
     counts = [
         f"{sum(flag in result.flags for result in results)} {flag.value}"
         for flag in (taxonomy.Flag.STALE, taxonomy.Flag.HOT)
     ]
     print(f"{name} · {len(results)} open issues · " + " · ".join(counts))
+    print(_describe_stale_window(stale_days, repository["stale_source"]))
     rows = [("ISSUE", "FLAGS", "IDLE", "ENGAGEMENT", "TITLE")]
     for result in results:
         rows.append(
@@ -630,6 +637,17 @@ def _run_triage(args: argparse.Namespace) -> None:
             )
         )
     _print_table(rows)
+
+
+def _describe_stale_window(days: int, repo_source: str | None) -> str:
+    """Says which stale window a run used and where it came from."""
+    window = f"Stale after {days} day{'' if days == 1 else 's'} without human"
+    if repo_source is None:
+        return f"{window} activity."
+    return (
+        f"{window} activity; the repository's own {repo_source} caps the "
+        "window."
+    )
 
 
 def _shorten(text: str, width: int) -> str:

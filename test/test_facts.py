@@ -129,3 +129,15 @@ def test_quiet_repository_has_no_hot_issues() -> None:
 
 def test_no_issues_gives_no_facts() -> None:
     assert facts.compute([], NOW) == []
+
+
+def test_repositorys_shorter_stale_window_wins() -> None:
+    assert facts.stale_window(60, 30) == 30
+
+
+def test_our_window_stands_when_the_repository_is_more_lenient() -> None:
+    assert facts.stale_window(60, 90) == 60
+
+
+def test_our_window_stands_when_the_repository_defines_none() -> None:
+    assert facts.stale_window(45, None) == 45

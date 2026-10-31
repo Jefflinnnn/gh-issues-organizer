@@ -244,17 +244,39 @@ def test_run_prints_each_open_issue_with_its_flags(
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].startswith("vorssaint/vorssaint-utils · 3 open issues")
     assert lines[0].endswith("· 1 hot")
-    assert lines[1].split() == [
+    assert lines[1] == "Stale after 60 days without human activity."
+    assert lines[2].split() == [
         "ISSUE",
         "FLAGS",
         "IDLE",
         "ENGAGEMENT",
         "TITLE",
     ]
-    rows = {line.split()[0]: line for line in lines[2:]}
+    rows = {line.split()[0]: line for line in lines[3:]}
     assert set(rows) == {"#3267", "#3668", "#3678"}
     assert "hot" in rows["#3267"]
     assert "hot" not in rows["#3668"]
+
+
+def test_run_caps_the_stale_window_at_the_repositorys_own(
+    triage: Triage, tracked: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Every fixture issue had human activity before today, so a one-day
+    # window from the repository makes them all stale.
+    with sqlite3.connect(tracked) as connection:
+        connection.execute(
+            "UPDATE repository SET stale_days = 1, "
+            "stale_source = '.github/stale.yml'"
+        )
+
+    assert triage("run", "vorssaint/vorssaint-utils", "--stale-days", "90") == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "· 3 stale ·" in lines[0]
+    assert lines[1] == (
+        "Stale after 1 day without human activity; the repository's own "
+        ".github/stale.yml caps the window."
+    )
 
 
 @pytest.mark.usefixtures("tracked")

@@ -118,6 +118,7 @@ triage run vorssaint/vorssaint-utils
 
 ```
 vorssaint/vorssaint-utils · 3 open issues · 0 stale · 1 hot
+Stale after 60 days without human activity.
 ISSUE  FLAGS  IDLE  ENGAGEMENT  TITLE
 #3267  hot    1d    5           Network module: add connectivity history and interface st...
 #3668  -      1d    1           Dynamic Island Hermes Agent
@@ -134,6 +135,12 @@ computes two flags each time:
   ```bash
   triage run vorssaint/vorssaint-utils --stale-days 90
   ```
+
+  If the repository marks issues stale sooner itself, its window wins: a
+  repository that goes stale at 30 days never leaves an issue idle for 60.
+  `triage` reads it from an `actions/stale` workflow or `.github/stale.yml`
+  when the rule covers every issue, refreshes it on each `add` and `sync`,
+  and says which file it used. Rules limited to some labels don't count.
 - **hot**: in the top 10% of the repository's open issues by reactions plus
   comments, with at least 3.
 

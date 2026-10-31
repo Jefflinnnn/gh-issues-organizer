@@ -86,6 +86,25 @@ def compute(
     return results
 
 
+def stale_window(requested_days: int, repo_days: int | None) -> int:
+    """Returns how many idle days make an issue stale.
+
+    A repository that marks issues stale sooner than we would never lets
+    one sit long enough for our window, so its own window is the maximum.
+
+    Args:
+        requested_days: Our window: the default or the user's choice.
+        repo_days: The repo-wide window the repository's own files define,
+            or None if they define none.
+
+    Returns:
+        The shorter of the two windows.
+    """
+    if repo_days is None:
+        return requested_days
+    return min(requested_days, repo_days)
+
+
 def last_human_activity(issue: loader.OpenIssue) -> datetime.datetime:
     """Returns when a person last opened or commented on an issue.
 
