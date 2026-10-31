@@ -1,7 +1,9 @@
 """Tests for `triage completion` and `triage list --names`."""
 
+import argparse
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -12,6 +14,36 @@ from triage_cli import cli
 from triage_cli import completion
 
 TRACKED = ["BaranziniLab/biorouter", "vorssaint/vorssaint-utils"]
+
+
+def _commands_taking_a_tracked_repo() -> set[str]:
+    """Returns the commands whose <repo> must already be tracked."""
+    parser = cli._build_parser()
+    subparsers = next(
+        action
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    # add takes a repository that isn't tracked yet, so completing tracked
+    # names would only suggest the ones it refuses.
+    return {
+        name
+        for name, command in subparsers.choices.items()
+        if name != "add"
+        and any(action.dest == "repo" for action in command._actions)
+    }
+
+
+@pytest.mark.parametrize("shell", sorted(completion.SCRIPTS))
+def test_every_command_on_a_tracked_repo_completes_its_name(shell: str) -> None:
+    # The case branch that runs `triage list --names`, e.g. "remove|sync)".
+    branch = re.search(
+        r"^\s*([a-z|]+)\)\n[^\n]*triage list --names",
+        completion.SCRIPTS[shell],
+        re.MULTILINE,
+    )
+    assert branch is not None
+    assert set(branch.group(1).split("|")) == _commands_taking_a_tracked_repo()
 
 
 @pytest.mark.usefixtures("tracked")
