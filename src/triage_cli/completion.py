@@ -24,7 +24,7 @@ _triage() {
   case $command in
     "")
       COMPREPLY=($(compgen \
-        -W $'setup\nadd\nsync\nrun\nlist\nremove\ncompletion' -- "$cur")) ;;
+        -W $'setup\nadd\nsync\nrun\nlist\nremove' -- "$cur")) ;;
     remove|sync|run)
       COMPREPLY=($(compgen -W "$(triage list --names 2>/dev/null)" \
         -- "$cur")) ;;
@@ -50,7 +50,6 @@ _triage() {
     'run:flag the open issues of a tracked repository'
     'list:show tracked repositories'
     'remove:stop tracking a repository and delete its data'
-    'completion:turn on Tab completion or print its script'
   )
   for (( i = 2; i < CURRENT; i++ )); do
     case ${words[i]} in

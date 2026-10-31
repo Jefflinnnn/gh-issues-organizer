@@ -137,7 +137,7 @@ def test_completion_install_asks_first(
     assert not zshrc.exists()
     captured = capsys.readouterr()
     assert "This adds 2 lines to ~/.zshrc" in captured.err
-    assert "triage completion install" in captured.out
+    assert "Turn it on any time with: triage setup" in captured.out
 
 
 def test_completion_install_without_terminal_needs_yes(
@@ -169,6 +169,7 @@ def test_completion_install_unsupported_shell(
     assert cli.main(["completion", "install", "--yes"]) == 1
 
     assert message in caplog.text
+    assert "triage setup --shell zsh" in caplog.text
     assert not zshrc.exists()
 
 
@@ -196,6 +197,47 @@ def test_setup_with_yes_finishes(
 
 
 @pytest.mark.usefixtures("good_token")
+def test_setup_shell_overrides_an_unsupported_shell(
+    zshrc: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("SHELL", "/usr/bin/fish")
+
+    assert cli.main(["setup", "--shell", "zsh", "--yes"]) == 0
+
+    assert "Tab completion: added to ~/.zshrc" in capsys.readouterr().out
+    assert zshrc.read_text(encoding="utf-8") == ZSH_LINES
+
+
+@pytest.mark.usefixtures("good_token")
+def test_setup_shell_picks_that_shells_startup_file(
+    zshrc: pathlib.Path,
+) -> None:
+    assert cli.main(["setup", "--shell", "bash", "--yes"]) == 0
+
+    bashrc = zshrc.with_name(".bashrc")
+    assert 'eval "$(triage completion bash)"' in bashrc.read_text(
+        encoding="utf-8"
+    )
+    assert not zshrc.exists()
+
+
+@pytest.mark.usefixtures("good_token")
+def test_setup_without_a_known_shell_points_to_shell_option(
+    zshrc: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("SHELL", "/usr/bin/fish")
+
+    assert cli.main(["setup", "--yes"]) == 0
+
+    assert "triage setup --shell zsh" in capsys.readouterr().out
+    assert not zshrc.exists()
+
+
+@pytest.mark.usefixtures("good_token")
 def test_setup_again_skips_finished_steps(
     zshrc: pathlib.Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -220,7 +262,7 @@ def test_setup_no_leaves_completion_for_later(
 
     assert not zshrc.exists()
     out = capsys.readouterr().out
-    assert "Turn it on any time with: triage completion install" in out
+    assert "Turn it on any time with: triage setup" in out
     assert "Ready." in out
 
 
@@ -235,7 +277,7 @@ def test_setup_without_terminal_skips_completion(
     assert cli.main(["setup"]) == 0
 
     assert not zshrc.exists()
-    assert "triage completion install --yes" in capsys.readouterr().out
+    assert "triage setup --yes" in capsys.readouterr().out
 
 
 @pytest.mark.usefixtures("zshrc")
