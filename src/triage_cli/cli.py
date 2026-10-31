@@ -102,13 +102,23 @@ _SYNC_EPILOG = """\
 What it fetches:
   Issues created, edited, commented on, closed or reopened since the newest
   change already stored. Run it as often as you like: nothing is fetched
-  twice, and a run with no changes costs one request.
+  twice. It also re-checks the pull requests linked to each stored open
+  issue. A run with no changes costs one request, plus one per 100 stored
+  open issues.
 
 Examples:
   triage sync                           # every tracked repository
   triage sync vorssaint/vorssaint-utils
   triage sync --comments 5
 """
+
+# The flags code computes today, in the order the summary line counts them.
+_REPORTED_FLAGS = (
+    taxonomy.Flag.STALE,
+    taxonomy.Flag.HOT,
+    taxonomy.Flag.FIX_IN_PROGRESS,
+    taxonomy.Flag.FIX_PENDING_CONFIRMATION,
+)
 
 _HOT_RULE = (
     f"top {facts.HOT_FRACTION:.0%} of open issues by reactions plus comments, "
@@ -120,6 +130,13 @@ Flags:
   stale  no new issue or comment from a person in --stale-days days; bot
          comments and label edits don't count
   hot    {_HOT_RULE}
+  fix-in-progress
+         an open pull request in this repository links to the issue;
+         "(draft)" when every such pull request is a draft
+  fix-pending-confirmation
+         a linked pull request was merged and shipped in a release (or
+         merged, if the repository publishes none), and the reporter hasn't
+         commented since
 
 The repository's own stale window caps --stale-days when it is shorter. It
 comes from an actions/stale workflow or .github/stale.yml that applies to
@@ -568,6 +585,14 @@ def _sync_one(path: pathlib.Path, comments: int, token: str) -> str:
             repo_ref.parse(name), since, comments, token
         )
         changes = store.save_fetch(connection, fetch, "sync", started_at)
+        # A pull request that links to an issue, or its merge, leaves the
+        # issue's updatedAt alone, so the fetch above can't see it.
+        links, _ = github_api.fetch_linked_pull_requests(
+            fetch.repository.name_with_owner,
+            store.open_issue_ids(connection),
+            token,
+        )
+        store.save_linked_pull_requests(connection, links)
     finally:
         connection.close()
     return _describe_sync(fetch.repository.name_with_owner, changes, fetch)
@@ -618,6 +643,7 @@ def _run_triage(args: argparse.Namespace) -> None:
             "SELECT name_with_owner, stale_days, stale_source FROM repository"
         ).fetchone()
         issues = loader.load_open_issues(connection)
+        releases = loader.load_release_times(connection)
     finally:
         connection.close()
 
@@ -630,10 +656,11 @@ def _run_triage(args: argparse.Namespace) -> None:
         issues,
         now=datetime.datetime.now(datetime.timezone.utc),
         stale_days=stale_days,
+        releases=releases,
     )
     counts = [
         f"{sum(flag in result.flags for result in results)} {flag.value}"
-        for flag in (taxonomy.Flag.STALE, taxonomy.Flag.HOT)
+        for flag in _REPORTED_FLAGS
     ]
     print(f"{name} · {len(results)} open issues · " + " · ".join(counts))
     print(_describe_stale_window(stale_days, repository["stale_source"]))
@@ -643,7 +670,7 @@ def _run_triage(args: argparse.Namespace) -> None:
         rows.append(
             (
                 f"#{result.issue.number}",
-                ", ".join(flag.value for flag in result.flags) or "-",
+                _describe_flags(result),
                 f"{result.idle_days}d",
                 str(result.engagement),
                 result.issue.title,
@@ -657,6 +684,17 @@ def _run_triage(args: argparse.Namespace) -> None:
             f"Showing {len(shown)} of {len(results)} issues; drop --limit "
             "to see them all."
         )
+
+
+def _describe_flags(result: facts.IssueFacts) -> str:
+    """Lists an issue's flags, marking a fix that is only drafts so far."""
+    names = [
+        f"{flag.value} (draft)"
+        if flag is taxonomy.Flag.FIX_IN_PROGRESS and result.draft_fix
+        else flag.value
+        for flag in result.flags
+    ]
+    return ", ".join(names) or "-"
 
 
 def _describe_stale_window(days: int, repo_source: str | None) -> str:

@@ -148,6 +148,13 @@ def test_connect_upgrades_a_schema_1_file_in_place(
         for column in connection.execute("PRAGMA table_info(repository)")
     }
     assert {"stale_days", "stale_source"} <= repository_columns
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
+    assert {"linked_pull_requests", "releases"} <= tables
 
 
 def test_save_fetch_stores_every_record(
@@ -240,6 +247,63 @@ def test_save_fetch_records_and_refreshes_the_stale_window(
 
     assert tuple(saved) == (30, ".github/stale.yml")
     assert tuple(refreshed) == (None, None)
+
+
+def test_save_fetch_stores_linked_pull_requests_and_releases(
+    db_path: pathlib.Path, fetch_result: github_api.FetchResult
+) -> None:
+    connection = store.connect(db_path)
+    first, *others = fetch_result.issues
+    pull = github_api.LinkedPullRequest(
+        number=7, state="OPEN", is_draft=True, merged_at=None
+    )
+    release = github_api.Release(tag_name="v1", published_at="2026-10-29")
+    fetch = dataclasses.replace(
+        fetch_result,
+        repository=dataclasses.replace(
+            fetch_result.repository, releases=(release,)
+        ),
+        issues=[
+            dataclasses.replace(first, linked_pull_requests=[pull]),
+            *others,
+        ],
+    )
+
+    store.save_fetch(connection, fetch, "add", store.utc_now())
+    store.save_fetch(connection, fetch_result, "sync", store.utc_now())
+
+    # The second fetch saw no links, so the first's are replaced; releases
+    # accumulate, because a fetch only returns the latest few.
+    assert _count(connection, "linked_pull_requests") == 0
+    assert [
+        tuple(row) for row in connection.execute("SELECT * FROM releases")
+    ] == [("v1", "2026-10-29")]
+
+
+def test_save_linked_pull_requests_skips_issues_not_stored(
+    db_path: pathlib.Path, fetch_result: github_api.FetchResult
+) -> None:
+    connection = store.connect(db_path)
+    store.save_fetch(connection, fetch_result, "add", store.utc_now())
+    pull = github_api.LinkedPullRequest(
+        number=7, state="MERGED", is_draft=False, merged_at="2026-10-29"
+    )
+    first = fetch_result.issues[0].id
+
+    store.save_linked_pull_requests(
+        connection, {first: [pull], "other": [pull]}
+    )
+
+    stored = [
+        tuple(row)
+        for row in connection.execute(
+            "SELECT issue_id, number FROM linked_pull_requests"
+        )
+    ]
+    assert stored == [(first, 7)]
+    assert sorted(store.open_issue_ids(connection)) == sorted(
+        issue.id for issue in fetch_result.issues
+    )
 
 
 def test_save_fetch_refuses_a_different_repository(

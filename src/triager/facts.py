@@ -32,6 +32,8 @@ class IssueFacts:
         idle_days: Whole days from ``last_human_activity`` to now.
         engagement: Reactions plus comments.
         flags: The flags that apply, in ``taxonomy.Flag`` order.
+        draft_fix: Whether every open pull request behind
+            ``fix-in-progress`` is still a draft.
     """
 
     issue: loader.OpenIssue
@@ -39,12 +41,14 @@ class IssueFacts:
     idle_days: int
     engagement: int
     flags: list[taxonomy.Flag]
+    draft_fix: bool = False
 
 
 def compute(
     issues: Sequence[loader.OpenIssue],
     now: datetime.datetime,
     stale_days: int = DEFAULT_STALE_DAYS,
+    releases: Sequence[datetime.datetime] = (),
 ) -> list[IssueFacts]:
     """Computes the facts and flags for every open issue of a repository.
 
@@ -54,6 +58,8 @@ def compute(
         now: The current time, timezone-aware.
         stale_days: Days without human activity after which an issue is
             stale.
+        releases: When the repository's stable releases were published.
+            Empty for a repository that doesn't publish releases.
 
     Returns:
         One entry per issue, in the order given.
@@ -74,6 +80,13 @@ def compute(
             flags.append(taxonomy.Flag.STALE)
         if score >= hot_threshold:
             flags.append(taxonomy.Flag.HOT)
+        open_fixes = [
+            pull for pull in issue.linked_pull_requests if pull.state == "OPEN"
+        ]
+        if open_fixes:
+            flags.append(taxonomy.Flag.FIX_IN_PROGRESS)
+        if awaits_reporter(issue, releases):
+            flags.append(taxonomy.Flag.FIX_PENDING_CONFIRMATION)
         results.append(
             IssueFacts(
                 issue=issue,
@@ -81,9 +94,72 @@ def compute(
                 idle_days=idle_days,
                 engagement=score,
                 flags=flags,
+                draft_fix=bool(open_fixes)
+                and all(pull.is_draft for pull in open_fixes),
             )
         )
     return results
+
+
+def fix_shipped_at(
+    issue: loader.OpenIssue, releases: Sequence[datetime.datetime]
+) -> datetime.datetime | None:
+    """Returns when the latest merged fix for an issue reached its users.
+
+    The fix is the most recently merged pull request that links to the
+    issue. In a repository that publishes releases, it ships with the
+    first release after the merge; in one that doesn't, the merge itself
+    ships it.
+
+    Args:
+        issue: The issue to check.
+        releases: Publish times of the repository's stable releases.
+
+    Returns:
+        When the fix shipped, or None if no linked pull request is merged
+        or no release has followed the merge yet.
+    """
+    merged = [
+        pull.merged_at
+        for pull in issue.linked_pull_requests
+        if pull.state == "MERGED" and pull.merged_at is not None
+    ]
+    if not merged:
+        return None
+    merged_at = max(merged)
+    if not releases:
+        return merged_at
+    return min(
+        (release for release in releases if release >= merged_at),
+        default=None,
+    )
+
+
+def awaits_reporter(
+    issue: loader.OpenIssue, releases: Sequence[datetime.datetime]
+) -> bool:
+    """Says whether a shipped fix is waiting for its reporter to confirm it.
+
+    A linked fix has shipped and the person who opened the issue hasn't
+    commented since. A reply means someone needs to read it, which the
+    model decides, so it ends the wait. Only the stored comments are seen:
+    a reply older than the cache's latest few is missed.
+
+    Args:
+        issue: The open issue to check.
+        releases: Publish times of the repository's stable releases.
+
+    Returns:
+        True when the issue awaits the reporter's confirmation.
+    """
+    shipped_at = fix_shipped_at(issue, releases)
+    if shipped_at is None:
+        return False
+    return not any(
+        comment.author == issue.author and comment.created_at > shipped_at
+        for comment in issue.recent_comments
+        if issue.author is not None
+    )
 
 
 def stale_window(requested_days: int, repo_days: int | None) -> int:

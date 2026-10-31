@@ -94,6 +94,116 @@ def test_parse_without_stale_config_has_no_window(
     assert fetch_result.repository.stale_window is None
 
 
+def _pull_node(
+    number: int, repo: str = "vorssaint/vorssaint-utils"
+) -> dict[str, Any]:
+    return {
+        "number": number,
+        "state": "MERGED",
+        "isDraft": False,
+        "mergedAt": "2026-10-24T03:01:07Z",
+        "baseRepository": {"nameWithOwner": repo},
+    }
+
+
+def test_parse_reads_same_repository_linked_pull_requests(
+    issues_payload: dict[str, Any],
+) -> None:
+    node = issues_payload["data"]["repository"]["issues"]["nodes"][0]
+    node["linkedPullRequests"] = {
+        "nodes": [
+            {"source": _pull_node(3457)},
+            {"source": _pull_node(3457)},
+            {"subject": _pull_node(12)},
+            {"source": _pull_node(9, repo="someone/fork")},
+            # A cross-reference from another issue, not a pull request.
+            {"source": {}},
+        ]
+    }
+
+    result = github_api.parse_issues_response(issues_payload, REPO)
+
+    pulls = result.issues[0].linked_pull_requests
+    assert [pull.number for pull in pulls] == [12, 3457]
+    assert pulls[1] == github_api.LinkedPullRequest(
+        number=3457,
+        state="MERGED",
+        is_draft=False,
+        merged_at="2026-10-24T03:01:07Z",
+    )
+
+
+def test_parse_keeps_only_published_stable_releases(
+    issues_payload: dict[str, Any],
+) -> None:
+    issues_payload["data"]["repository"]["releases"] = {
+        "nodes": [
+            {
+                "tagName": "v2-rc1",
+                "publishedAt": "2026-10-30T00:00:00Z",
+                "isDraft": False,
+                "isPrerelease": True,
+            },
+            {
+                "tagName": "v2",
+                "publishedAt": None,
+                "isDraft": True,
+                "isPrerelease": False,
+            },
+            {
+                "tagName": "v1",
+                "publishedAt": "2026-10-29T00:00:00Z",
+                "isDraft": False,
+                "isPrerelease": False,
+            },
+        ]
+    }
+
+    result = github_api.parse_issues_response(issues_payload, REPO)
+
+    assert result.repository.releases == (
+        github_api.Release(tag_name="v1", published_at="2026-10-29T00:00:00Z"),
+    )
+
+
+def test_fetch_linked_pull_requests_pages_and_skips_deleted_issues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pages: list[list[str]] = []
+
+    def post(
+        query: str, variables: dict[str, Any], token: str
+    ) -> dict[str, Any]:
+        ids = variables["ids"]
+        pages.append(ids)
+        nodes: list[dict[str, Any] | None] = [
+            None
+            if issue_id == "gone"
+            else {
+                "id": issue_id,
+                "linkedPullRequests": {"nodes": [{"source": _pull_node(1)}]},
+            }
+            for issue_id in ids
+        ]
+        return {
+            "data": {"rateLimit": {"cost": 1, "remaining": 9}, "nodes": nodes},
+            "errors": [{"type": "NOT_FOUND"}] if "gone" in ids else [],
+        }
+
+    monkeypatch.setattr(github_api, "_post_graphql", post)
+    issue_ids = [f"I_{n}" for n in range(150)] + ["gone"]
+
+    links, cost = github_api.fetch_linked_pull_requests(
+        "vorssaint/vorssaint-utils", issue_ids, "token"
+    )
+
+    assert [len(page) for page in pages] == [100, 51]
+    assert cost == 2
+    assert len(links) == 150
+    assert "gone" not in links
+    assert [pull.number for pull in links["I_0"]] == [1]
+
+
 def test_parse_reports_missing_repository() -> None:
     payload = {
         "data": {"repository": None},

@@ -7,6 +7,7 @@ import json
 import logging
 import pathlib
 import sqlite3
+from collections.abc import Mapping
 
 from issue_store import github_api
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 # Bump when the tables change, and add the step that upgrades the previous
 # version to _MIGRATIONS. A file from a newer version is rejected rather than
 # misread.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS repository (
@@ -66,6 +67,22 @@ CREATE TABLE IF NOT EXISTS comments (
 
 CREATE INDEX IF NOT EXISTS comments_by_issue ON comments(issue_id);
 
+CREATE TABLE IF NOT EXISTS linked_pull_requests (
+    -- Pull requests in the same repository that link to an issue.
+    issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    number     INTEGER NOT NULL,
+    state      TEXT NOT NULL,
+    is_draft   INTEGER NOT NULL,
+    merged_at  TEXT,
+    PRIMARY KEY (issue_id, number)
+);
+
+CREATE TABLE IF NOT EXISTS releases (
+    -- Published stable releases seen so far.
+    tag_name      TEXT PRIMARY KEY,
+    published_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS runs (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     kind                  TEXT NOT NULL,
@@ -91,6 +108,24 @@ _MIGRATIONS = (
     """
     ALTER TABLE repository ADD COLUMN stale_days INTEGER;
     ALTER TABLE repository ADD COLUMN stale_source TEXT;
+    """,
+    # 4: pull requests linked to each issue, and the repository's releases.
+    """
+    CREATE TABLE IF NOT EXISTS linked_pull_requests (
+        -- Pull requests in the same repository that link to an issue.
+        issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+        number     INTEGER NOT NULL,
+        state      TEXT NOT NULL,
+        is_draft   INTEGER NOT NULL,
+        merged_at  TEXT,
+        PRIMARY KEY (issue_id, number)
+    );
+
+    CREATE TABLE IF NOT EXISTS releases (
+        -- Published stable releases seen so far.
+        tag_name      TEXT PRIMARY KEY,
+        published_at  TEXT NOT NULL
+    );
     """,
 )
 
@@ -257,6 +292,14 @@ def save_fetch(
     counts = collections.Counter[str]()
     with connection:
         _save_repository(connection, fetch.repository, finished_at)
+        connection.executemany(
+            "INSERT OR REPLACE INTO releases (tag_name, published_at) "
+            "VALUES (?, ?)",
+            [
+                (release.tag_name, release.published_at)
+                for release in fetch.repository.releases
+            ],
+        )
         for issue in fetch.issues:
             counts[_change_kind(connection, issue)] += 1
             _upsert_issue(connection, issue, finished_at)
@@ -430,6 +473,71 @@ def _upsert_issue(
                 comment.body,
             )
             for comment in issue.recent_comments
+        ],
+    )
+    _replace_linked_pull_requests(
+        connection, issue.id, issue.linked_pull_requests
+    )
+
+
+def save_linked_pull_requests(
+    connection: sqlite3.Connection,
+    links: Mapping[str, list[github_api.LinkedPullRequest]],
+) -> None:
+    """Replaces the stored linked pull requests of the given issues.
+
+    ``sync`` uses this after its fetch, because a pull request linking to
+    an issue doesn't count as a change to the issue.
+
+    Args:
+        connection: An open cache file from ``connect``.
+        links: Each issue's linked pull requests, keyed by node ID.
+            Issues not stored in the file are skipped.
+    """
+    with connection:
+        for issue_id, pulls in links.items():
+            stored = connection.execute(
+                "SELECT 1 FROM issues WHERE id = ?", (issue_id,)
+            ).fetchone()
+            if stored:
+                _replace_linked_pull_requests(connection, issue_id, pulls)
+
+
+def open_issue_ids(connection: sqlite3.Connection) -> list[str]:
+    """Returns the node IDs of the stored open issues.
+
+    Args:
+        connection: An open cache file from ``connect``.
+
+    Returns:
+        The IDs, in no particular order.
+    """
+    return [
+        row[0]
+        for row in connection.execute(
+            "SELECT id FROM issues WHERE state = 'OPEN'"
+        )
+    ]
+
+
+def _replace_linked_pull_requests(
+    connection: sqlite3.Connection,
+    issue_id: str,
+    pulls: list[github_api.LinkedPullRequest],
+) -> None:
+    """Stores an issue's linked pull requests in place of the old ones."""
+    connection.execute(
+        "DELETE FROM linked_pull_requests WHERE issue_id = ?", (issue_id,)
+    )
+    connection.executemany(
+        """
+        INSERT INTO linked_pull_requests (issue_id, number, state, is_draft,
+                                          merged_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            (issue_id, pull.number, pull.state, pull.is_draft, pull.merged_at)
+            for pull in pulls
         ],
     )
 

@@ -67,10 +67,16 @@ class FakeSync:
     Attributes:
         issues: The changed issues the next sync receives.
         requests: One ``(owner/name, since)`` pair per sync request.
+        links: The linked pull requests the link refresh returns.
+        link_requests: The issue IDs each link refresh asked about.
     """
 
     issues: list[github_api.Issue] = dataclasses.field(default_factory=list)
     requests: list[tuple[str, str]] = dataclasses.field(default_factory=list)
+    links: dict[str, list[github_api.LinkedPullRequest]] = dataclasses.field(
+        default_factory=dict
+    )
+    link_requests: list[list[str]] = dataclasses.field(default_factory=list)
 
 
 @pytest.fixture
@@ -98,8 +104,15 @@ def fake_sync(
             total_open=887,
         )
 
+    def fetch_links(
+        name_with_owner: str, issue_ids: list[str], token: str
+    ) -> tuple[dict[str, list[github_api.LinkedPullRequest]], int]:
+        served.link_requests.append(sorted(issue_ids))
+        return served.links, 1
+
     monkeypatch.setattr(github_api, "load_token", lambda: "test-token")
     monkeypatch.setattr(github_api, "fetch_changed_issues", fetch)
+    monkeypatch.setattr(github_api, "fetch_linked_pull_requests", fetch_links)
     return served
 
 

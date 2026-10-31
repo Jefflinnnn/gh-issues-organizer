@@ -48,4 +48,5 @@ class Flag(str, enum.Enum):
     STALE = "stale"
     HOT = "hot"
     FIX_IN_PROGRESS = "fix-in-progress"
+    FIX_PENDING_CONFIRMATION = "fix-pending-confirmation"
     SAFE_TO_CLOSE = "safe-to-close"

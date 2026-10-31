@@ -29,7 +29,40 @@ _STALE_CONFIG_FIELDS = """
     }
 """
 
-_ISSUE_FIELDS = """
+# Pull requests the issue's timeline links to: by mention or closing keyword
+# (cross-referenced) or through the Development sidebar (connected). A PR
+# linking to an issue doesn't change the issue's updatedAt, so sync
+# refreshes these separately with LINKS_QUERY.
+_LINKED_PR_FIELDS = """
+        linkedPullRequests: timelineItems(
+          last: 20, itemTypes: [CROSS_REFERENCED_EVENT, CONNECTED_EVENT]
+        ) {
+          nodes {
+            ... on CrossReferencedEvent {
+              source { ... on PullRequest {
+                number state isDraft mergedAt
+                baseRepository { nameWithOwner }
+              } }
+            }
+            ... on ConnectedEvent {
+              subject { ... on PullRequest {
+                number state isDraft mergedAt
+                baseRepository { nameWithOwner }
+              } }
+            }
+          }
+        }
+"""
+
+# Recent releases, to tell whether a merged fix has shipped.
+_RELEASE_FIELDS = """
+    releases(first: 20, orderBy: {field: CREATED_AT, direction: DESC}) {
+      nodes { tagName publishedAt isDraft isPrerelease }
+    }
+"""
+
+_ISSUE_FIELDS = (
+    """
         id
         number
         title
@@ -56,6 +89,8 @@ _ISSUE_FIELDS = """
           }
         }
 """
+    + _LINKED_PR_FIELDS
+)
 
 ISSUES_QUERY = (
     """
@@ -66,6 +101,7 @@ query($owner: String!, $name: String!, $limit: Int!, $comments: Int!) {
     nameWithOwner
     url"""
     + _STALE_CONFIG_FIELDS
+    + _RELEASE_FIELDS
     + """    issues(first: $limit, states: OPEN,
            orderBy: {field: UPDATED_AT, direction: DESC}) {
       totalCount
@@ -90,6 +126,7 @@ query($owner: String!, $name: String!, $since: DateTime!, $comments: Int!,
     nameWithOwner
     url"""
     + _STALE_CONFIG_FIELDS
+    + _RELEASE_FIELDS
     + """    openIssues: issues(states: OPEN) { totalCount }
     issues(first: $pageSize, after: $after, filterBy: {since: $since},
            orderBy: {field: UPDATED_AT, direction: ASC}) {
@@ -103,6 +140,21 @@ query($owner: String!, $name: String!, $since: DateTime!, $comments: Int!,
 """
 )
 
+
+# The linked pull requests of stored issues, looked up by node ID.
+LINKS_QUERY = (
+    """
+query($ids: [ID!]!) {
+  rateLimit { cost remaining resetAt }
+  nodes(ids: $ids) {
+    ... on Issue {
+      id"""
+    + _LINKED_PR_FIELDS
+    + """    }
+  }
+}
+"""
+)
 
 VIEWER_QUERY = """
 query {
@@ -139,6 +191,36 @@ class Comment:
 
 
 @dataclasses.dataclass(frozen=True)
+class LinkedPullRequest:
+    """A pull request in the same repository that links to an issue.
+
+    Attributes:
+        number: The pull request's number.
+        state: OPEN, CLOSED or MERGED.
+        is_draft: Whether it is still a draft.
+        merged_at: ISO 8601 timestamp, or None unless merged.
+    """
+
+    number: int
+    state: str
+    is_draft: bool
+    merged_at: str | None
+
+
+@dataclasses.dataclass(frozen=True)
+class Release:
+    """A published, stable release.
+
+    Attributes:
+        tag_name: The release's tag, e.g. ``v3.4.3``.
+        published_at: ISO 8601 timestamp.
+    """
+
+    tag_name: str
+    published_at: str
+
+
+@dataclasses.dataclass(frozen=True)
 class Issue:
     """One issue with the fields the tool stores.
 
@@ -162,6 +244,8 @@ class Issue:
         reaction_count: Total reactions of every kind.
         thumbs_up: Number of thumbs-up reactions.
         recent_comments: The last few comments, oldest first.
+        linked_pull_requests: Pull requests in the same repository that
+            link to the issue, by number.
         raw: The issue exactly as GitHub returned it.
     """
 
@@ -183,6 +267,7 @@ class Issue:
     reaction_count: int
     thumbs_up: int
     recent_comments: list[Comment]
+    linked_pull_requests: list[LinkedPullRequest]
     raw: dict[str, Any]
 
 
@@ -195,12 +280,14 @@ class Repository:
         name_with_owner: Canonical ``owner/name`` with GitHub's casing.
         url: Link to the repository on github.com.
         stale_window: The repo-wide stale window its files define, if any.
+        releases: Its most recent stable releases, newest first.
     """
 
     id: str
     name_with_owner: str
     url: str
     stale_window: stale_policy.StalePolicy | None = None
+    releases: tuple[Release, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -378,6 +465,54 @@ def fetch_changed_issues(
         after = page.end_cursor
 
 
+def fetch_linked_pull_requests(
+    name_with_owner: str, issue_ids: list[str], token: str
+) -> tuple[dict[str, list[LinkedPullRequest]], int]:
+    """Looks up the linked pull requests of issues already stored.
+
+    Args:
+        name_with_owner: The issues' repository, to leave out pull
+            requests from other repositories.
+        issue_ids: GitHub node IDs of the issues.
+        token: A GitHub token that can read the repository.
+
+    Returns:
+        Each found issue's linked pull requests, keyed by node ID, and the
+        rate-limit points the requests cost. An issue deleted on GitHub is
+        left out.
+
+    Raises:
+        GitHubError: A request failed.
+    """
+    links: dict[str, list[LinkedPullRequest]] = {}
+    cost = 0
+    for start in range(0, len(issue_ids), MAX_PAGE_SIZE):
+        ids = issue_ids[start : start + MAX_PAGE_SIZE]
+        payload = _post_graphql(LINKS_QUERY, {"ids": ids}, token)
+        errors = [
+            error
+            for error in payload.get("errors") or []
+            # A deleted issue comes back as null with NOT_FOUND.
+            if error.get("type") != "NOT_FOUND"
+        ]
+        if errors:
+            messages = "; ".join(str(error.get("message")) for error in errors)
+            raise GitHubError(f"GitHub returned errors: {messages}")
+        data = payload["data"]
+        cost += data["rateLimit"]["cost"]
+        for node in data["nodes"]:
+            if node:
+                links[node["id"]] = _parse_linked_pull_requests(
+                    node, name_with_owner
+                )
+    logger.info(
+        "Refreshed linked pull requests of %d issues in %s",
+        len(links),
+        name_with_owner,
+    )
+    return links, cost
+
+
 def _post_graphql(
     query: str, variables: dict[str, Any], token: str
 ) -> dict[str, Any]:
@@ -501,8 +636,11 @@ def _fetch_result(
             name_with_owner=repository["nameWithOwner"],
             url=repository["url"],
             stale_window=stale_policy.find(_stale_config_files(repository)),
+            releases=_parse_releases(repository),
         ),
-        issues=[_parse_issue(node) for node in nodes],
+        issues=[
+            _parse_issue(node, repository["nameWithOwner"]) for node in nodes
+        ],
         total_open=total_open,
         rate_limit_cost=rate_limit["cost"],
         rate_limit_remaining=rate_limit["remaining"],
@@ -526,7 +664,44 @@ def _stale_config_files(repository: dict[str, Any]) -> dict[str, str]:
     return files
 
 
-def _parse_issue(node: dict[str, Any]) -> Issue:
+def _parse_releases(repository: dict[str, Any]) -> tuple[Release, ...]:
+    """Returns the published, stable releases, newest first."""
+    # The recorded test responses predate this field.
+    nodes = (repository.get("releases") or {}).get("nodes") or []
+    return tuple(
+        Release(tag_name=node["tagName"], published_at=node["publishedAt"])
+        for node in nodes
+        if node["publishedAt"]
+        and not node["isDraft"]
+        and not node["isPrerelease"]
+    )
+
+
+def _parse_linked_pull_requests(
+    node: dict[str, Any], name_with_owner: str
+) -> list[LinkedPullRequest]:
+    """Returns the same-repository pull requests an issue's timeline links.
+
+    A pull request in another repository, such as a fork's, can't fix this
+    one, so it is left out.
+    """
+    linked: dict[int, LinkedPullRequest] = {}
+    events = (node.get("linkedPullRequests") or {}).get("nodes") or []
+    for event in events:
+        pull = event.get("source") or event.get("subject") or {}
+        base = (pull.get("baseRepository") or {}).get("nameWithOwner", "")
+        if "number" not in pull or base.lower() != name_with_owner.lower():
+            continue
+        linked[pull["number"]] = LinkedPullRequest(
+            number=pull["number"],
+            state=pull["state"],
+            is_draft=pull["isDraft"],
+            merged_at=pull["mergedAt"],
+        )
+    return [linked[number] for number in sorted(linked)]
+
+
+def _parse_issue(node: dict[str, Any], name_with_owner: str) -> Issue:
     """Converts one issue node from the GraphQL response."""
     comments = node["comments"]
     return Issue(
@@ -558,6 +733,7 @@ def _parse_issue(node: dict[str, Any]) -> Issue:
             )
             for comment in comments["nodes"]
         ],
+        linked_pull_requests=_parse_linked_pull_requests(node, name_with_owner),
         raw=node,
     )
 

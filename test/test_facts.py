@@ -17,30 +17,59 @@ def _issue(
     number: int = 1,
     *,
     opened_days_ago: int = 0,
+    author: str | None = "reporter",
     author_type: str | None = "User",
     comments: tuple[tuple[str | None, int], ...] = (),
     comment_count: int | None = None,
     reactions: int = 0,
+    replies: tuple[tuple[str, int], ...] = (),
+    pulls: tuple[loader.StoredPullRequest, ...] = (),
 ) -> loader.OpenIssue:
-    """Builds an issue; ``comments`` are (author_type, days_ago) pairs."""
+    """Builds an issue.
+
+    ``comments`` are (author_type, days_ago) pairs from unnamed authors;
+    ``replies`` are (login, days_ago) pairs from people.
+    """
+    stored = [
+        loader.StoredComment(
+            author=None, author_type=kind, created_at=_days_ago(days)
+        )
+        for kind, days in comments
+    ] + [
+        loader.StoredComment(
+            author=login, author_type="User", created_at=_days_ago(days)
+        )
+        for login, days in replies
+    ]
+    stored.sort(key=lambda comment: comment.created_at)
     return loader.OpenIssue(
         number=number,
         title=f"Issue {number}",
         url=f"https://github.com/o/r/issues/{number}",
+        author=author,
         author_type=author_type,
         created_at=_days_ago(opened_days_ago),
         labels=[],
-        comment_count=len(comments) if comment_count is None else comment_count,
+        comment_count=len(stored) if comment_count is None else comment_count,
         reaction_count=reactions,
-        recent_comments=[
-            loader.StoredComment(author_type=kind, created_at=_days_ago(days))
-            for kind, days in comments
-        ],
+        recent_comments=stored,
+        linked_pull_requests=list(pulls),
     )
 
 
-def _flags(issue: loader.OpenIssue, **kwargs: int) -> list[taxonomy.Flag]:
-    return facts.compute([issue], NOW, **kwargs)[0].flags
+def _pull(
+    state: str, *, merged_days_ago: int | None = None, draft: bool = False
+) -> loader.StoredPullRequest:
+    merged_at = None if merged_days_ago is None else _days_ago(merged_days_ago)
+    return loader.StoredPullRequest(
+        number=100, state=state, is_draft=draft, merged_at=merged_at
+    )
+
+
+def _flags(
+    issue: loader.OpenIssue, stale_days: int = facts.DEFAULT_STALE_DAYS
+) -> list[taxonomy.Flag]:
+    return facts.compute([issue], NOW, stale_days=stale_days)[0].flags
 
 
 def test_issue_without_human_activity_for_the_window_is_stale() -> None:
@@ -141,3 +170,75 @@ def test_our_window_stands_when_the_repository_is_more_lenient() -> None:
 
 def test_our_window_stands_when_the_repository_defines_none() -> None:
     assert facts.stale_window(45, None) == 45
+
+
+def test_open_linked_pull_request_means_a_fix_is_in_progress() -> None:
+    result = facts.compute([_issue(pulls=(_pull("OPEN"),))], NOW)[0]
+
+    assert taxonomy.Flag.FIX_IN_PROGRESS in result.flags
+    assert not result.draft_fix
+
+
+def test_draft_only_fix_is_marked() -> None:
+    issue = _issue(pulls=(_pull("OPEN", draft=True),))
+
+    assert facts.compute([issue], NOW)[0].draft_fix
+
+
+def test_closed_unmerged_pull_request_sets_no_fix_flag() -> None:
+    assert _flags(_issue(pulls=(_pull("CLOSED"),))) == []
+
+
+def test_shipped_fix_awaits_a_silent_reporter() -> None:
+    issue = _issue(pulls=(_pull("MERGED", merged_days_ago=10),))
+
+    flags = facts.compute([issue], NOW, releases=[_days_ago(5)])[0].flags
+
+    assert flags == [taxonomy.Flag.FIX_PENDING_CONFIRMATION]
+
+
+def test_reporter_reply_after_the_release_ends_the_wait() -> None:
+    issue = _issue(
+        pulls=(_pull("MERGED", merged_days_ago=10),),
+        replies=(("reporter", 2),),
+    )
+
+    assert not facts.awaits_reporter(issue, [_days_ago(5)])
+
+
+def test_other_peoples_replies_do_not_end_the_wait() -> None:
+    issue = _issue(
+        pulls=(_pull("MERGED", merged_days_ago=10),),
+        replies=(("someone-else", 2), ("reporter", 7)),
+    )
+
+    assert facts.awaits_reporter(issue, [_days_ago(5)])
+
+
+def test_merged_fix_waits_for_the_next_release() -> None:
+    issue = _issue(pulls=(_pull("MERGED", merged_days_ago=3),))
+
+    assert facts.fix_shipped_at(issue, [_days_ago(30)]) is None
+    assert not facts.awaits_reporter(issue, [_days_ago(30)])
+
+
+def test_first_release_after_the_merge_ships_the_fix() -> None:
+    issue = _issue(pulls=(_pull("MERGED", merged_days_ago=10),))
+
+    shipped = facts.fix_shipped_at(
+        issue, [_days_ago(20), _days_ago(8), _days_ago(1)]
+    )
+
+    assert shipped == _days_ago(8)
+
+
+def test_merge_ships_the_fix_without_releases() -> None:
+    issue = _issue(pulls=(_pull("MERGED", merged_days_ago=10),))
+
+    assert facts.fix_shipped_at(issue, []) == _days_ago(10)
+
+
+def test_deleted_reporter_still_awaits_confirmation() -> None:
+    issue = _issue(author=None, pulls=(_pull("MERGED", merged_days_ago=10),))
+
+    assert facts.awaits_reporter(issue, [])

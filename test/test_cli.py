@@ -243,8 +243,10 @@ def test_run_prints_each_open_issue_with_its_flags(
     assert triage("run", "vorssaint/vorssaint-utils") == 0
 
     lines = capsys.readouterr().out.splitlines()
-    assert lines[0].startswith("vorssaint/vorssaint-utils · 3 open issues")
-    assert lines[0].endswith("· 1 hot")
+    assert lines[0] == (
+        "vorssaint/vorssaint-utils · 3 open issues · 0 stale · 1 hot · "
+        "0 fix-in-progress · 0 fix-pending-confirmation"
+    )
     assert lines[1] == "Stale after 60 days without human activity."
     assert lines[2].split() == [
         "ISSUE",
@@ -321,6 +323,56 @@ def test_run_limit_shows_the_first_issues(
     assert "· 3 open issues ·" in lines[0]
     assert [line.split()[0] for line in lines[3:5]] == ["#3267", "#3668"]
     assert lines[5] == "Showing 2 of 3 issues; drop --limit to see them all."
+
+
+def test_run_flags_fixes_from_linked_pull_requests(
+    triage: Triage, tracked: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with sqlite3.connect(tracked) as connection:
+        ids = dict(connection.execute("SELECT number, id FROM issues"))
+        connection.executemany(
+            "INSERT INTO linked_pull_requests VALUES (?, ?, ?, ?, ?)",
+            [
+                (ids[3668], 10, "OPEN", 1, None),
+                (ids[3678], 11, "MERGED", 0, "2026-10-01T00:00:00Z"),
+            ],
+        )
+        connection.execute(
+            "INSERT INTO releases VALUES ('v1', '2026-10-02T00:00:00Z')"
+        )
+
+    assert triage("run", "vorssaint/vorssaint-utils") == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "· 1 fix-in-progress · 1 fix-pending-confirmation" in lines[0]
+    rows = {line.split()[0]: line for line in lines[3:]}
+    assert "fix-in-progress (draft)" in rows["#3668"]
+    assert "fix-pending-confirmation" in rows["#3678"]
+
+
+def test_sync_refreshes_linked_pull_requests_of_open_issues(
+    triage: Triage,
+    tracked: pathlib.Path,
+    fake_sync: FakeSync,
+) -> None:
+    with sqlite3.connect(tracked) as connection:
+        ids = dict(connection.execute("SELECT number, id FROM issues"))
+    fake_sync.links = {
+        ids[3267]: [
+            github_api.LinkedPullRequest(
+                number=42, state="OPEN", is_draft=False, merged_at=None
+            )
+        ]
+    }
+
+    assert triage("sync") == 0
+
+    assert fake_sync.link_requests == [sorted(ids.values())]
+    with sqlite3.connect(tracked) as connection:
+        stored = connection.execute(
+            "SELECT issue_id, number, state FROM linked_pull_requests"
+        ).fetchall()
+    assert stored == [(ids[3267], 42, "OPEN")]
 
 
 @pytest.mark.usefixtures("tracked")

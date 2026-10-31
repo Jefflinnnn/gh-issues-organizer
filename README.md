@@ -106,9 +106,11 @@ vorssaint/vorssaint-utils · 2 new · 1 closed · 4 updated · 889 open on GitHu
 ```
 
 `sync` picks up where the stored issues leave off, so it is safe to run as
-often as you like, and a run with no changes costs one request. Issues that
-were already open when you ran `add` but are older than its `--limit` are not
-back-filled.
+often as you like. It also re-checks which pull requests link to each stored
+open issue, because a pull request mentioning an issue, or getting merged,
+doesn't count as a change to the issue on GitHub. A run with no changes costs
+one request, plus one per 100 stored open issues. Issues that were already
+open when you ran `add` but are older than its `--limit` are not back-filled.
 
 Flag a tracked repository's stored open issues:
 
@@ -127,7 +129,7 @@ ISSUE  FLAGS  IDLE  ENGAGEMENT  TITLE
 ```
 
 `run` works on the cache, so run `triage sync` first for fresh data. It
-computes two flags each time:
+computes these flags each time:
 
 - **stale**: no new issue or comment from a person in 60 days. Bot comments
   and label edits don't reset the clock. Change the window with
@@ -144,6 +146,19 @@ computes two flags each time:
   and says which file it used. Rules limited to some labels don't count.
 - **hot**: in the top 10% of the repository's open issues by reactions plus
   comments, with at least 3.
+- **fix-in-progress**: an open pull request in the same repository links to
+  the issue, by mentioning it or through GitHub's Development sidebar.
+  `(draft)` means every such pull request is still a draft. A mention isn't
+  always a fix, so treat this as a lead.
+- **fix-pending-confirmation**: a linked pull request was merged, the first
+  release after it has shipped (or the merge itself, in a repository with no
+  releases), and the person who opened the issue hasn't commented since. The
+  issue is waiting on them, not on a maintainer. Once they reply, the flag
+  goes away, and reading the reply is left to the model step that comes
+  later.
+
+The fix flags come from what GitHub records, not from the repository's
+labels.
 
 Long titles wrap to your terminal's width; output piped to another program
 keeps one line per issue. To see only the first few issues:
@@ -153,8 +168,10 @@ triage run vorssaint/vorssaint-utils --limit 20
 ```
 
 `IDLE` is days since the last human activity; `ENGAGEMENT` is reactions plus
-comments. The cache keeps only each issue's latest comments, so if those are
-all from bots, the issue counts as idle since it was opened.
+comments. The cache keeps only each issue's latest comments (3 unless you
+pass `--comments` to `add` or `sync`). If those are all from bots, the issue
+counts as idle since it was opened, and a reporter's reply older than them is
+missed.
 
 Show tracked repositories:
 
