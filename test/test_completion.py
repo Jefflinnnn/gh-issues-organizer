@@ -99,7 +99,7 @@ bash_only = pytest.mark.skipif(
     [
         (
             ["triage", ""],
-            ["setup", "add", "sync", "run", "list", "remove", "completion"],
+            ["setup", "add", "sync", "run", "list", "remove"],
         ),
         (["triage", "re"], ["remove"]),
         (["triage", "ru"], ["run"]),

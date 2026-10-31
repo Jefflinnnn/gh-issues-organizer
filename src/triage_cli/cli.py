@@ -9,6 +9,7 @@ import sqlite3
 import sys
 from collections.abc import Callable
 from collections.abc import Sequence
+from typing import Any
 
 from issue_store import github_api
 from issue_store import repo_ref
@@ -79,7 +80,6 @@ Examples:
   triage remove vorssaint/vorssaint-utils
 
 Run triage from the project folder: it reads .env and .cache/ there.
-Set up Tab completion with "triage completion --help".
 
 Use "triage <command> --help" for more information about a command.
 """
@@ -162,13 +162,15 @@ _SETUP_EPILOG = """\
 Steps:
   1. GitHub token: checks .env has GITHUB_TOKEN and that GitHub accepts it.
   2. Tab completion: offers to add two lines to your shell's startup file.
-     Say no and turn it on later with: triage completion install
+     It reads your shell from $SHELL; pass --shell to choose bash or zsh.
+     Say no and turn it on later by running setup again.
 
 Running setup again is safe: finished steps are skipped.
 
 Examples:
   triage setup
   triage setup --yes    # turn on Tab completion without asking
+  triage setup --shell bash
 """
 
 
@@ -237,7 +239,7 @@ def _add_command(
     commands: "argparse._SubParsersAction[help_format.Parser]",
     name: str,
     *,
-    summary: str,
+    summary: str | None,
     usage: str,
     description: str,
     epilog: str,
@@ -247,7 +249,8 @@ def _add_command(
     Args:
         commands: The subparsers action of the top-level parser.
         name: The command name, e.g. ``"add"``.
-        summary: One line shown in the top-level command list.
+        summary: One line shown in the top-level command list, or None to
+            leave the command out of it.
         usage: The usage line, e.g. ``"%(prog)s [options] <repo>"``.
         description: The paragraph at the top of the command's help.
         epilog: Text after the options, usually examples.
@@ -255,14 +258,16 @@ def _add_command(
     Returns:
         The command's parser.
     """
+    # argparse lists a command only when add_parser gets help=.
+    listing: dict[str, Any] = {} if summary is None else {"help": summary}
     command = commands.add_parser(
         name,
         # Without prog, argparse prefixes the top-level usage line.
         prog=f"triage {name}",
-        help=summary,
         usage=usage,
         description=description,
         epilog=epilog,
+        **listing,
     )
     global_options = command.add_argument_group("Global Options")
     _add_global_options(global_options.add_argument, suppress_defaults=True)
@@ -312,6 +317,12 @@ def _build_parser() -> help_format.Parser:
     )
     _add_startup_file_options(
         setup, yes_help="Turn on Tab completion without asking"
+    )
+    setup.add_argument(
+        "--shell",
+        choices=sorted(completion.SCRIPTS),
+        metavar="<shell>",
+        help="bash or zsh (default: read from $SHELL)",
     )
     setup.set_defaults(handler=_run_setup)
 
@@ -426,7 +437,9 @@ def _build_parser() -> help_format.Parser:
     completion_command = _add_command(
         commands,
         "completion",
-        summary="Turn on Tab completion or print its script",
+        # Hidden: setup turns completion on, and startup files still call
+        # "triage completion <shell>" to load the script.
+        summary=None,
         usage="%(prog)s [options] <shell>\n"
         "  triage completion install [options] [<shell>]",
         description="Print the Tab completion script for your shell, or "
@@ -762,7 +775,7 @@ def _run_setup(args: argparse.Namespace) -> None:
     """Checks the GitHub token, then offers Tab completion."""
     token_ok = _check_token_step()
 
-    shell = completion.detect_shell(os.environ)
+    shell = args.shell or completion.detect_shell(os.environ)
     if shell is None:
         print(f"Tab completion: skipped. {_unknown_shell_message()}")
     else:
@@ -771,7 +784,7 @@ def _run_setup(args: argparse.Namespace) -> None:
         except ConfirmationRequiredError:
             print(
                 "Tab completion: skipped (no terminal to ask). Turn it on "
-                "with: triage completion install --yes"
+                "with: triage setup --yes"
             )
 
     if not token_ok:
@@ -833,10 +846,7 @@ def _offer_completion(shell: str, path: pathlib.Path, assume_yes: bool) -> None:
         f"{shown}:\n\n{lines}\n[y/N] "
     )
     if not assume_yes and not _confirm(question):
-        print(
-            "Tab completion: skipped. Turn it on any time with: "
-            "triage completion install"
-        )
+        print("Tab completion: skipped. Turn it on any time with: triage setup")
         return
     completion.install(path, shell)
     print(f"Tab completion: added to {shown}. Open a new terminal to use it.")
@@ -850,7 +860,7 @@ def _unknown_shell_message() -> str:
         if name
         else "Couldn't tell which shell you use."
     )
-    return f"{reason} For bash or zsh, run: triage completion install zsh"
+    return f"{reason} For bash or zsh, run: triage setup --shell zsh"
 
 
 def _startup_file(args: argparse.Namespace, shell: str) -> pathlib.Path:

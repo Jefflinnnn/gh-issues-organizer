@@ -182,12 +182,15 @@ nothing needs setting up. Git ignores `.cache/`.
 
 ## Tab completion
 
-`triage setup` offers Tab completion. If you skipped it, turn it on any
-time; it asks before editing your startup file:
+`triage setup` offers Tab completion. If you skipped it, run setup again;
+it skips finished steps and asks before editing your startup file:
 
 ```bash
-triage completion install
+triage setup
 ```
+
+Setup reads your shell from `$SHELL`. To pick one yourself, pass
+`--shell zsh` or `--shell bash`.
 
 Or add the line to `~/.zshrc` (or `~/.bashrc` with `bash`) yourself:
 
