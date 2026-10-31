@@ -177,6 +177,28 @@ lists the repositories tracked in the current folder, the same ones
 | `Repository ... not found` | Check the spelling. Private repos need a token with access to them. |
 | `... is already tracked` | The repository already has a cache file; see `triage list`. |
 
+## After the core features
+
+- **Pick the default model by comparison.** Triage the same issues with
+  Claude Haiku, Sonnet and Opus, and compare their tags and reasons.
+  Haiku is the starting default because it costs the least for its
+  quality; the comparison decides whether a larger model is worth its
+  price.
+- **Support more providers and models.** The first release supports
+  Anthropic, OpenAI, Gemini, Claude on Amazon Bedrock, and any
+  OpenAI-compatible URL. Add others once triage works end to end.
+- **Revisit the model clients if two SDKs fall short.** Triage talks to
+  models through two SDKs: `anthropic` (Anthropic API and Bedrock) and
+  `openai` (OpenAI, Gemini and other OpenAI-compatible URLs). If
+  Gemini's OpenAI-compatible endpoint, still in beta, misses a feature,
+  add `google-genai` as a native client. A wrapper such as LiteLLM would
+  cover more providers at the cost of a much larger dependency tree.
+- **Accept Bedrock API keys.** Bedrock also takes bearer tokens in place
+  of AWS access keys. Support them once access keys work.
+- **Let users check tags against their own labels.** A maintainer who
+  knows the repository hand-labels a sample of issues, and the tool
+  reports how often each model agrees with them.
+
 ## Development
 
 ```bash
