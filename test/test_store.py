@@ -5,6 +5,7 @@ import sqlite3
 import pytest
 
 from issue_store import github_api
+from issue_store import stale_policy
 from issue_store import store
 
 
@@ -49,13 +50,68 @@ def test_every_older_version_has_an_upgrade_step() -> None:
     assert len(store._MIGRATIONS) == store.SCHEMA_VERSION - 1
 
 
+# The tables as schema version 1 wrote them, copied from that release.
+_SCHEMA_1 = """
+CREATE TABLE IF NOT EXISTS repository (
+    -- Exactly one row: the repository this file belongs to.
+    id               TEXT PRIMARY KEY,
+    name_with_owner  TEXT NOT NULL,
+    url              TEXT NOT NULL,
+    added_at         TEXT NOT NULL,
+    last_synced_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS issues (
+    id                  TEXT PRIMARY KEY,
+    number              INTEGER NOT NULL UNIQUE,
+    title               TEXT NOT NULL,
+    body                TEXT NOT NULL,
+    url                 TEXT NOT NULL,
+    state               TEXT NOT NULL,
+    state_reason        TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    closed_at           TEXT,
+    author              TEXT,
+    author_association  TEXT NOT NULL,
+    labels_json         TEXT NOT NULL,
+    comment_count       INTEGER NOT NULL,
+    reaction_count      INTEGER NOT NULL,
+    thumbs_up           INTEGER NOT NULL,
+    raw_json            TEXT NOT NULL,
+    fetched_at          TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS comments (
+    id                  TEXT PRIMARY KEY,
+    issue_id            TEXT NOT NULL
+                        REFERENCES issues(id) ON DELETE CASCADE,
+    author              TEXT,
+    author_association  TEXT NOT NULL,
+    created_at          TEXT NOT NULL,
+    body                TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS comments_by_issue ON comments(issue_id);
+
+CREATE TABLE IF NOT EXISTS runs (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind                  TEXT NOT NULL,
+    started_at            TEXT NOT NULL,
+    finished_at           TEXT NOT NULL,
+    issues_fetched        INTEGER NOT NULL,
+    total_open            INTEGER NOT NULL,
+    rate_limit_cost       INTEGER NOT NULL,
+    rate_limit_remaining  INTEGER NOT NULL
+);
+"""
+
+
 def _write_schema_1_file(path: pathlib.Path) -> None:
     """Writes a cache file as schema 1 did, before author types."""
-    # Schema 1 is today's schema without the author_type columns.
-    schema_1 = store._SCHEMA.replace("    author_type         TEXT,\n", "")
     path.parent.mkdir(parents=True)
     with sqlite3.connect(path) as connection:
-        connection.executescript(schema_1)
+        connection.executescript(_SCHEMA_1)
         connection.execute(
             "INSERT INTO repository VALUES ('R_1', 'o/r', 'u', 't', 't')"
         )
@@ -87,6 +143,11 @@ def test_connect_upgrades_a_schema_1_file_in_place(
         for column in connection.execute("PRAGMA table_info(comments)")
     }
     assert "author_type" in comment_columns
+    repository_columns = {
+        column["name"]
+        for column in connection.execute("PRAGMA table_info(repository)")
+    }
+    assert {"stale_days", "stale_source"} <= repository_columns
 
 
 def test_save_fetch_stores_every_record(
@@ -154,6 +215,31 @@ def test_save_fetch_stores_author_types(
     }
     assert issue_types == {"User"}
     assert comment_types == {"User"}
+
+
+def test_save_fetch_records_and_refreshes_the_stale_window(
+    db_path: pathlib.Path, fetch_result: github_api.FetchResult
+) -> None:
+    connection = store.connect(db_path)
+    window = stale_policy.StalePolicy(30, ".github/stale.yml")
+    with_window = dataclasses.replace(
+        fetch_result,
+        repository=dataclasses.replace(
+            fetch_result.repository, stale_window=window
+        ),
+    )
+
+    store.save_fetch(connection, with_window, "add", store.utc_now())
+    saved = connection.execute(
+        "SELECT stale_days, stale_source FROM repository"
+    ).fetchone()
+    store.save_fetch(connection, fetch_result, "sync", store.utc_now())
+    refreshed = connection.execute(
+        "SELECT stale_days, stale_source FROM repository"
+    ).fetchone()
+
+    assert tuple(saved) == (30, ".github/stale.yml")
+    assert tuple(refreshed) == (None, None)
 
 
 def test_save_fetch_refuses_a_different_repository(

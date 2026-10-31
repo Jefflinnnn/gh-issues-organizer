@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Bump when the tables change, and add the step that upgrades the previous
 # version to _MIGRATIONS. A file from a newer version is rejected rather than
 # misread.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS repository (
@@ -24,7 +24,11 @@ CREATE TABLE IF NOT EXISTS repository (
     name_with_owner  TEXT NOT NULL,
     url              TEXT NOT NULL,
     added_at         TEXT NOT NULL,
-    last_synced_at   TEXT NOT NULL
+    last_synced_at   TEXT NOT NULL,
+    -- The repo-wide stale window its own files define, refreshed on each
+    -- fetch; NULL when it defines none.
+    stale_days       INTEGER,
+    stale_source     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS issues (
@@ -82,6 +86,11 @@ _MIGRATIONS = (
     """
     ALTER TABLE issues ADD COLUMN author_type TEXT;
     ALTER TABLE comments ADD COLUMN author_type TEXT;
+    """,
+    # 3: the repository's own stale window.
+    """
+    ALTER TABLE repository ADD COLUMN stale_days INTEGER;
+    ALTER TABLE repository ADD COLUMN stale_source TEXT;
     """,
 )
 
@@ -305,6 +314,9 @@ def _save_repository(
     synced_at: str,
 ) -> None:
     """Records the file's repository, refusing to mix two repositories."""
+    window = repository.stale_window
+    stale_days = window.days if window else None
+    stale_source = window.source if window else None
     row = connection.execute(
         "SELECT id, name_with_owner FROM repository"
     ).fetchone()
@@ -312,8 +324,8 @@ def _save_repository(
         connection.execute(
             """
             INSERT INTO repository (id, name_with_owner, url, added_at,
-                                    last_synced_at)
-            VALUES (?, ?, ?, ?, ?)
+                                    last_synced_at, stale_days, stale_source)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 repository.id,
@@ -321,6 +333,8 @@ def _save_repository(
                 repository.url,
                 synced_at,
                 synced_at,
+                stale_days,
+                stale_source,
             ),
         )
         return
@@ -331,8 +345,14 @@ def _save_repository(
         )
     connection.execute(
         "UPDATE repository SET name_with_owner = ?, url = ?, "
-        "last_synced_at = ?",
-        (repository.name_with_owner, repository.url, synced_at),
+        "last_synced_at = ?, stale_days = ?, stale_source = ?",
+        (
+            repository.name_with_owner,
+            repository.url,
+            synced_at,
+            stale_days,
+            stale_source,
+        ),
     )
 
 

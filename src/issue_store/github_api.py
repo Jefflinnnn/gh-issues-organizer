@@ -10,6 +10,7 @@ import urllib.request
 from typing import Any
 
 from issue_store import repo_ref
+from issue_store import stale_policy
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,16 @@ GRAPHQL_URL = "https://api.github.com/graphql"
 REQUEST_TIMEOUT_S = 30
 # GraphQL caps any connection at 100 nodes per request.
 MAX_PAGE_SIZE = 100
+
+# The files that can define a repo-wide stale window; see stale_policy.
+_STALE_CONFIG_FIELDS = """
+    workflows: object(expression: "HEAD:.github/workflows") {
+      ... on Tree { entries { name object { ... on Blob { text } } } }
+    }
+    probotStale: object(expression: "HEAD:.github/stale.yml") {
+      ... on Blob { text }
+    }
+"""
 
 _ISSUE_FIELDS = """
         id
@@ -53,8 +64,9 @@ query($owner: String!, $name: String!, $limit: Int!, $comments: Int!) {
   repository(owner: $owner, name: $name) {
     id
     nameWithOwner
-    url
-    issues(first: $limit, states: OPEN,
+    url"""
+    + _STALE_CONFIG_FIELDS
+    + """    issues(first: $limit, states: OPEN,
            orderBy: {field: UPDATED_AT, direction: DESC}) {
       totalCount
       nodes {"""
@@ -76,8 +88,9 @@ query($owner: String!, $name: String!, $since: DateTime!, $comments: Int!,
   repository(owner: $owner, name: $name) {
     id
     nameWithOwner
-    url
-    openIssues: issues(states: OPEN) { totalCount }
+    url"""
+    + _STALE_CONFIG_FIELDS
+    + """    openIssues: issues(states: OPEN) { totalCount }
     issues(first: $pageSize, after: $after, filterBy: {since: $since},
            orderBy: {field: UPDATED_AT, direction: ASC}) {
       pageInfo { hasNextPage endCursor }
@@ -181,11 +194,13 @@ class Repository:
         id: GitHub's global node ID, stable across renames and transfers.
         name_with_owner: Canonical ``owner/name`` with GitHub's casing.
         url: Link to the repository on github.com.
+        stale_window: The repo-wide stale window its files define, if any.
     """
 
     id: str
     name_with_owner: str
     url: str
+    stale_window: stale_policy.StalePolicy | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -485,12 +500,30 @@ def _fetch_result(
             id=repository["id"],
             name_with_owner=repository["nameWithOwner"],
             url=repository["url"],
+            stale_window=stale_policy.find(_stale_config_files(repository)),
         ),
         issues=[_parse_issue(node) for node in nodes],
         total_open=total_open,
         rate_limit_cost=rate_limit["cost"],
         rate_limit_remaining=rate_limit["remaining"],
     )
+
+
+def _stale_config_files(repository: dict[str, Any]) -> dict[str, str]:
+    """Collects the text of the files that can set a stale window."""
+    files = {}
+    # GitHub sends null for a path that doesn't exist; the recorded test
+    # responses predate these fields, so they may be missing too.
+    probot = repository.get("probotStale")
+    if probot and probot.get("text") is not None:
+        files[stale_policy.PROBOT_PATH] = probot["text"]
+    workflows = repository.get("workflows") or {}
+    for entry in workflows.get("entries") or []:
+        blob = entry.get("object") or {}
+        name = entry["name"]
+        if name.endswith((".yml", ".yaml")) and blob.get("text") is not None:
+            files[f"{stale_policy.WORKFLOWS_DIR}/{name}"] = blob["text"]
+    return files
 
 
 def _parse_issue(node: dict[str, Any]) -> Issue:

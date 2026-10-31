@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Triage a GitHub repository's open issues from the terminal."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "pyyaml>=6",
+]
 
 [project.scripts]
 triage = "triage_cli.cli:main"

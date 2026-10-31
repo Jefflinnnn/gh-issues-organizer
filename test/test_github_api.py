@@ -6,6 +6,7 @@ import pytest
 
 from issue_store import github_api
 from issue_store import repo_ref
+from issue_store import stale_policy
 
 REPO = repo_ref.RepoRef(owner="vorssaint", name="vorssaint-utils")
 
@@ -58,6 +59,39 @@ def test_parse_reads_bot_authors(issues_payload: dict[str, Any]) -> None:
 
     comment = result.issues[0].recent_comments[0]
     assert (comment.author, comment.author_type) == ("github-actions", "Bot")
+
+
+def test_parse_finds_the_repositorys_stale_window(
+    issues_payload: dict[str, Any],
+) -> None:
+    repository = issues_payload["data"]["repository"]
+    repository["probotStale"] = None
+    repository["workflows"] = {
+        "entries": [
+            {"name": "README.md", "object": {"text": "days"}},
+            {"name": "assets", "object": {}},
+            {
+                "name": "stale.yml",
+                "object": {
+                    "text": "jobs:\n  s:\n    steps:\n"
+                    "      - uses: actions/stale@v9\n"
+                    "        with:\n          days-before-issue-stale: 30\n"
+                },
+            },
+        ]
+    }
+
+    result = github_api.parse_issues_response(issues_payload, REPO)
+
+    assert result.repository.stale_window == stale_policy.StalePolicy(
+        30, ".github/workflows/stale.yml"
+    )
+
+
+def test_parse_without_stale_config_has_no_window(
+    fetch_result: github_api.FetchResult,
+) -> None:
+    assert fetch_result.repository.stale_window is None
 
 
 def test_parse_reports_missing_repository() -> None:
