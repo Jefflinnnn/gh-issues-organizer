@@ -26,42 +26,28 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   checks:
-    name: Lint, types, tests (Python ${{ matrix.python-version }})
+    name: Lint, types, tests
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.10"
 
       # --locked fails if uv.lock is out of date with pyproject.toml, so CI
       # always tests the versions recorded in the lockfile.
       - name: Install project
-        if: hashFiles('pyproject.toml') != ''
-        run: uv sync --locked --all-extras --dev
+        run: uv sync --locked --dev
 
-      # Ruff comes from uv.lock once the project exists; before that, uvx.
       - name: Ruff lint
-        run: |
-          if [ -f pyproject.toml ]; then uv run ruff check .
-          else uvx ruff check .; fi
+        run: uv run ruff check .
       - name: Ruff format check
-        run: |
-          if [ -f pyproject.toml ]; then uv run ruff format --check .
-          else uvx ruff format --check .; fi
+        run: uv run ruff format --check .
 
-      # The steps below switch on automatically once pyproject.toml lands.
-
+      # No path argument, so mypy checks the files listed in pyproject.toml.
       - name: Type check (mypy)
-        if: hashFiles('pyproject.toml') != ''
-        run: uv run mypy .
+        run: uv run mypy
 
       - name: Tests (pytest)
-        if: hashFiles('pyproject.toml') != ''
-        # Exit code 5 means "no tests collected"; allowed only until tests exist.
-        run: uv run pytest || [ $? -eq 5 ]
+        run: uv run pytest
