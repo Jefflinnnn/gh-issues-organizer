@@ -29,7 +29,7 @@ _ISSUE_FIELDS = """
         createdAt
         updatedAt
         closedAt
-        author { login }
+        author { login __typename }
         authorAssociation
         labels(first: 20) { nodes { name } }
         reactions { totalCount }
@@ -38,7 +38,7 @@ _ISSUE_FIELDS = """
           totalCount
           nodes {
             id
-            author { login }
+            author { login __typename }
             authorAssociation
             createdAt
             body
@@ -110,6 +110,8 @@ class Comment:
     Attributes:
         id: GitHub's global node ID for the comment.
         author: Login of the author, or None for a deleted account.
+        author_type: The author's account type, e.g. User or Bot, or None
+            for a deleted account.
         author_association: The author's role, e.g. OWNER or NONE.
         created_at: ISO 8601 timestamp.
         body: Markdown text of the comment.
@@ -117,6 +119,7 @@ class Comment:
 
     id: str
     author: str | None
+    author_type: str | None
     author_association: str
     created_at: str
     body: str
@@ -138,6 +141,8 @@ class Issue:
         updated_at: ISO 8601 timestamp.
         closed_at: ISO 8601 timestamp, or None while open.
         author: Login of the author, or None for a deleted account.
+        author_type: The author's account type, e.g. User or Bot, or None
+            for a deleted account.
         author_association: The author's role, e.g. OWNER or NONE.
         labels: Names of the repo labels on the issue.
         comment_count: Total comments on the issue.
@@ -158,6 +163,7 @@ class Issue:
     updated_at: str
     closed_at: str | None
     author: str | None
+    author_type: str | None
     author_association: str
     labels: list[str]
     comment_count: int
@@ -502,6 +508,7 @@ def _parse_issue(node: dict[str, Any]) -> Issue:
         updated_at=node["updatedAt"],
         closed_at=node["closedAt"],
         author=_login(node["author"]),
+        author_type=_account_type(node["author"]),
         author_association=node["authorAssociation"],
         labels=[label["name"] for label in node["labels"]["nodes"]],
         comment_count=comments["totalCount"],
@@ -511,6 +518,7 @@ def _parse_issue(node: dict[str, Any]) -> Issue:
             Comment(
                 id=comment["id"],
                 author=_login(comment["author"]),
+                author_type=_account_type(comment["author"]),
                 author_association=comment["authorAssociation"],
                 created_at=comment["createdAt"],
                 body=comment["body"],
@@ -524,6 +532,11 @@ def _parse_issue(node: dict[str, Any]) -> Issue:
 def _login(author: dict[str, Any] | None) -> str | None:
     """Returns an author's login; GitHub sends null for deleted accounts."""
     return author["login"] if author else None
+
+
+def _account_type(author: dict[str, Any] | None) -> str | None:
+    """Returns an author's account type, such as User or Bot."""
+    return author["__typename"] if author else None
 
 
 def check_token(token: str) -> TokenStatus:

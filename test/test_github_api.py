@@ -27,6 +27,7 @@ def test_parse_reads_issue_fields(fetch_result: github_api.FetchResult) -> None:
     assert issue.state == "OPEN"
     assert issue.closed_at is None
     assert issue.author == "leontievilya"
+    assert issue.author_type == "User"
     assert issue.labels == ["enhancement"]
     assert issue.comment_count == 2
     assert [c.author for c in issue.recent_comments] == ["shu-vro", "Psylar87"]
@@ -41,7 +42,22 @@ def test_parse_handles_deleted_authors(issues_payload: dict[str, Any]) -> None:
     result = github_api.parse_issues_response(issues_payload, REPO)
 
     assert result.issues[0].author is None
+    assert result.issues[0].author_type is None
     assert result.issues[0].recent_comments[0].author is None
+    assert result.issues[0].recent_comments[0].author_type is None
+
+
+def test_parse_reads_bot_authors(issues_payload: dict[str, Any]) -> None:
+    node = issues_payload["data"]["repository"]["issues"]["nodes"][0]
+    node["comments"]["nodes"][0]["author"] = {
+        "login": "github-actions",
+        "__typename": "Bot",
+    }
+
+    result = github_api.parse_issues_response(issues_payload, REPO)
+
+    comment = result.issues[0].recent_comments[0]
+    assert (comment.author, comment.author_type) == ("github-actions", "Bot")
 
 
 def test_parse_reports_missing_repository() -> None:

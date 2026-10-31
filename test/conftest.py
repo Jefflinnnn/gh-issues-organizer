@@ -2,8 +2,10 @@
 
 ``fixtures/issues_response.json`` is the body GitHub returned for
 ``ISSUES_QUERY`` on vorssaint/vorssaint-utils with limit 3 and comments 3,
-recorded on 2026-10-29. Tests use it so they never need the network or a
-token.
+recorded on 2026-10-29. The ``__typename`` of each author was added by
+hand on 2026-10-30, after the query started asking for it; GitHub reports
+all six authors as ``User``. Tests use it so they never need the network
+or a token.
 """
 
 import copy

@@ -12,9 +12,10 @@ from issue_store import github_api
 
 logger = logging.getLogger(__name__)
 
-# Bump when the tables change. A file with another version is rejected so
-# old caches never silently miss columns.
-SCHEMA_VERSION = 1
+# Bump when the tables change, and add the step that upgrades the previous
+# version to _MIGRATIONS. A file from a newer version is rejected rather than
+# misread.
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS repository (
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS issues (
     updated_at          TEXT NOT NULL,
     closed_at           TEXT,
     author              TEXT,
+    author_type         TEXT,
     author_association  TEXT NOT NULL,
     labels_json         TEXT NOT NULL,
     comment_count       INTEGER NOT NULL,
@@ -52,6 +54,7 @@ CREATE TABLE IF NOT EXISTS comments (
     issue_id            TEXT NOT NULL
                         REFERENCES issues(id) ON DELETE CASCADE,
     author              TEXT,
+    author_type         TEXT,
     author_association  TEXT NOT NULL,
     created_at          TEXT NOT NULL,
     body                TEXT NOT NULL
@@ -70,6 +73,17 @@ CREATE TABLE IF NOT EXISTS runs (
     rate_limit_remaining  INTEGER NOT NULL
 );
 """
+
+
+# _MIGRATIONS[n] upgrades a file from version n + 1 to n + 2. Rows stored
+# before a step keep NULL in the columns it adds.
+_MIGRATIONS = (
+    # 2: who wrote each issue and comment, a person or a bot.
+    """
+    ALTER TABLE issues ADD COLUMN author_type TEXT;
+    ALTER TABLE comments ADD COLUMN author_type TEXT;
+    """,
+)
 
 
 class StoreError(RuntimeError):
@@ -125,7 +139,10 @@ def utc_now() -> str:
 
 
 def connect(path: pathlib.Path) -> sqlite3.Connection:
-    """Opens a cache file, creating it and its tables if needed.
+    """Opens a cache file, creating or upgrading its tables if needed.
+
+    A file from an older version of the tool is upgraded in place, keeping
+    its stored issues.
 
     Args:
         path: The SQLite file. Its folder is created if missing.
@@ -134,7 +151,8 @@ def connect(path: pathlib.Path) -> sqlite3.Connection:
         An open connection with foreign keys enforced.
 
     Raises:
-        StoreError: The file was made by another schema version.
+        StoreError: The file was made by a newer version of the tool, or
+            upgrading it failed.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
@@ -145,13 +163,37 @@ def connect(path: pathlib.Path) -> sqlite3.Connection:
         with connection:
             connection.executescript(_SCHEMA)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-    elif version != SCHEMA_VERSION:
+    elif version > SCHEMA_VERSION:
         connection.close()
         raise StoreError(
-            f"{path} uses schema version {version}, but this version of the "
-            f"tool needs {SCHEMA_VERSION}. Remove the repo and add it again."
+            f"{path} was written by a newer version of triage (schema "
+            f"version {version}; this one reads up to {SCHEMA_VERSION}). "
+            "Update triage: run git pull in the project folder."
         )
+    elif version < SCHEMA_VERSION:
+        _upgrade(connection, path, version)
     return connection
+
+
+def _upgrade(
+    connection: sqlite3.Connection, path: pathlib.Path, version: int
+) -> None:
+    """Runs each upgrade step after ``version``, one transaction per step."""
+    for target in range(version + 1, SCHEMA_VERSION + 1):
+        try:
+            connection.executescript(
+                "BEGIN;\n"
+                + _MIGRATIONS[target - 2]
+                + f"PRAGMA user_version = {target};\nCOMMIT;"
+            )
+        except sqlite3.DatabaseError as error:
+            connection.rollback()
+            connection.close()
+            raise StoreError(
+                f"Couldn't upgrade {path} to schema version {target}: "
+                f"{error}. Remove the repo and add it again."
+            ) from error
+        logger.info("Upgraded %s to schema version %d", path, target)
 
 
 def last_activity(connection: sqlite3.Connection) -> str:
@@ -304,10 +346,10 @@ def _upsert_issue(
         """
         INSERT INTO issues (id, number, title, body, url, state,
                             state_reason, created_at, updated_at, closed_at,
-                            author, author_association, labels_json,
-                            comment_count, reaction_count, thumbs_up,
-                            raw_json, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            author, author_type, author_association,
+                            labels_json, comment_count, reaction_count,
+                            thumbs_up, raw_json, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             number = excluded.number,
             title = excluded.title,
@@ -319,6 +361,7 @@ def _upsert_issue(
             updated_at = excluded.updated_at,
             closed_at = excluded.closed_at,
             author = excluded.author,
+            author_type = excluded.author_type,
             author_association = excluded.author_association,
             labels_json = excluded.labels_json,
             comment_count = excluded.comment_count,
@@ -339,6 +382,7 @@ def _upsert_issue(
             issue.updated_at,
             issue.closed_at,
             issue.author,
+            issue.author_type,
             issue.author_association,
             json.dumps(issue.labels),
             issue.comment_count,
@@ -351,15 +395,16 @@ def _upsert_issue(
     connection.execute("DELETE FROM comments WHERE issue_id = ?", (issue.id,))
     connection.executemany(
         """
-        INSERT INTO comments (id, issue_id, author, author_association,
-                              created_at, body)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO comments (id, issue_id, author, author_type,
+                              author_association, created_at, body)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
                 comment.id,
                 issue.id,
                 comment.author,
+                comment.author_type,
                 comment.author_association,
                 comment.created_at,
                 comment.body,

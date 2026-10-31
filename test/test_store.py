@@ -34,13 +34,59 @@ def test_connect_creates_folder_tables_and_version(
     assert version == store.SCHEMA_VERSION
 
 
-def test_connect_rejects_other_schema_versions(db_path: pathlib.Path) -> None:
+def test_connect_rejects_files_from_a_newer_version(
+    db_path: pathlib.Path,
+) -> None:
     db_path.parent.mkdir(parents=True)
     with sqlite3.connect(db_path) as connection:
         connection.execute("PRAGMA user_version = 999")
 
-    with pytest.raises(store.StoreError, match="schema version 999"):
+    with pytest.raises(store.StoreError, match="newer version of triage"):
         store.connect(db_path)
+
+
+def test_every_older_version_has_an_upgrade_step() -> None:
+    assert len(store._MIGRATIONS) == store.SCHEMA_VERSION - 1
+
+
+def _write_schema_1_file(path: pathlib.Path) -> None:
+    """Writes a cache file as schema 1 did, before author types."""
+    # Schema 1 is today's schema without the author_type columns.
+    schema_1 = store._SCHEMA.replace("    author_type         TEXT,\n", "")
+    path.parent.mkdir(parents=True)
+    with sqlite3.connect(path) as connection:
+        connection.executescript(schema_1)
+        connection.execute(
+            "INSERT INTO repository VALUES ('R_1', 'o/r', 'u', 't', 't')"
+        )
+        connection.execute(
+            "INSERT INTO issues (id, number, title, body, url, state, "
+            "created_at, updated_at, author_association, labels_json, "
+            "comment_count, reaction_count, thumbs_up, raw_json, fetched_at) "
+            "VALUES ('I_1', 1, 'Old', '', 'u', 'OPEN', 't', 't', 'NONE', "
+            "'[]', 0, 0, 0, '{}', 't')"
+        )
+        connection.execute("PRAGMA user_version = 1")
+
+
+def test_connect_upgrades_a_schema_1_file_in_place(
+    db_path: pathlib.Path,
+) -> None:
+    _write_schema_1_file(db_path)
+
+    connection = store.connect(db_path)
+
+    version = connection.execute("PRAGMA user_version").fetchone()[0]
+    assert version == store.SCHEMA_VERSION
+    row = connection.execute(
+        "SELECT title, author_type FROM issues WHERE id = 'I_1'"
+    ).fetchone()
+    assert (row["title"], row["author_type"]) == ("Old", None)
+    comment_columns = {
+        column["name"]
+        for column in connection.execute("PRAGMA table_info(comments)")
+    }
+    assert "author_type" in comment_columns
 
 
 def test_save_fetch_stores_every_record(
@@ -91,6 +137,23 @@ def test_saving_again_updates_instead_of_duplicating(
     ]
     assert comment_authors == ["Psylar87"]
     assert _count(connection, "runs") == 2
+
+
+def test_save_fetch_stores_author_types(
+    db_path: pathlib.Path, fetch_result: github_api.FetchResult
+) -> None:
+    connection = store.connect(db_path)
+
+    store.save_fetch(connection, fetch_result, "add", store.utc_now())
+
+    issue_types = {
+        row[0] for row in connection.execute("SELECT author_type FROM issues")
+    }
+    comment_types = {
+        row[0] for row in connection.execute("SELECT author_type FROM comments")
+    }
+    assert issue_types == {"User"}
+    assert comment_types == {"User"}
 
 
 def test_save_fetch_refuses_a_different_repository(

@@ -144,7 +144,8 @@ Options:
 
 Each tracked repository gets one SQLite file in `.cache/`, for example
 `.cache/vorssaint__vorssaint-utils.db`. The tool creates the file and its
-tables on first use; nothing needs setting up. Git ignores `.cache/`.
+tables on first use, and upgrades files written by an older version in place;
+nothing needs setting up. Git ignores `.cache/`.
 
 ## Tab completion
 
@@ -176,6 +177,7 @@ lists the repositories tracked in the current folder, the same ones
 | `GitHub rejected the token (HTTP 401)` | The token is mistyped or expired; generate a new one. |
 | `Repository ... not found` | Check the spelling. Private repos need a token with access to them. |
 | `... is already tracked` | The repository already has a cache file; see `triage list`. |
+| `... was written by a newer version of triage` | Update the tool: run `git pull` in the project folder. |
 
 ## Development
 
