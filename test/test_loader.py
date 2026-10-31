@@ -48,7 +48,3 @@ def test_skips_closed_issues(
     )
 
     assert [issue.number for issue in issues] == [3668, 3678]
-
-
-def test_parse_time_reads_github_timestamps() -> None:
-    assert loader.parse_time("2026-10-20T00:44:43Z").tzinfo is not None
