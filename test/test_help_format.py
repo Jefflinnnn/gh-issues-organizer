@@ -41,10 +41,18 @@ def test_commands_are_listed_flat(capsys: pytest.CaptureFixture[str]) -> None:
     lines = _help(capsys).splitlines()
     start = lines.index("Commands:") + 1
 
-    names = [line.split()[0] for line in lines[start : start + 6]]
+    names = [line.split()[0] for line in lines[start : start + 7]]
 
-    assert names == ["setup", "add", "sync", "list", "remove", "completion"]
-    assert all(line.startswith("  ") for line in lines[start : start + 6])
+    assert names == [
+        "setup",
+        "add",
+        "sync",
+        "run",
+        "list",
+        "remove",
+        "completion",
+    ]
+    assert all(line.startswith("  ") for line in lines[start : start + 7])
 
 
 @pytest.mark.parametrize(

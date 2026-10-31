@@ -1,9 +1,9 @@
 """Shell completion scripts for ``triage`` and installing them.
 
-The scripts complete command names and, after ``triage remove`` or
-``triage sync``, the repositories tracked in the current folder. They get
-those names from ``triage list --names`` so the list of tracked repositories
-has one source.
+The scripts complete command names and, after ``triage remove``,
+``triage sync`` or ``triage run``, the repositories tracked in the current
+folder. They get those names from ``triage list --names`` so the list of
+tracked repositories has one source.
 """
 
 import pathlib
@@ -23,9 +23,9 @@ _triage() {
   local IFS=$'\n'
   case $command in
     "")
-      COMPREPLY=($(compgen -W $'setup\nadd\nsync\nlist\nremove\ncompletion' \
-        -- "$cur")) ;;
-    remove|sync)
+      COMPREPLY=($(compgen \
+        -W $'setup\nadd\nsync\nrun\nlist\nremove\ncompletion' -- "$cur")) ;;
+    remove|sync|run)
       COMPREPLY=($(compgen -W "$(triage list --names 2>/dev/null)" \
         -- "$cur")) ;;
     completion)
@@ -47,6 +47,7 @@ _triage() {
     'setup:check your GitHub token and turn on Tab completion'
     'add:track a repository and fetch its open issues'
     'sync:fetch issues changed since the last run'
+    'run:flag the open issues of a tracked repository'
     'list:show tracked repositories'
     'remove:stop tracking a repository and delete its data'
     'completion:turn on Tab completion or print its script'
@@ -61,7 +62,7 @@ _triage() {
   case $command in
     "")
       _describe -t commands 'triage command' commands ;;
-    remove|sync)
+    remove|sync|run)
       repos=(${(f)"$(triage list --names 2>/dev/null)"})
       compadd -a repos ;;
     completion)

@@ -1,6 +1,7 @@
 """Command-line entry point for the ``triage`` commands."""
 
 import argparse
+import datetime
 import logging
 import os
 import pathlib
@@ -15,12 +16,17 @@ from issue_store import store
 from triage_cli import completion
 from triage_cli import help_format
 from triage_cli import timefmt
+from triager import facts
+from triager import loader
+from triager import taxonomy
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_DATA_DIR = pathlib.Path(".cache")
 DEFAULT_LIMIT = 10
 DEFAULT_COMMENTS = 3
+# Long titles are cut so each issue fits on one line of the run report.
+TITLE_WIDTH = 60
 
 # Errors a user can fix; they get a one-line message instead of a traceback.
 _USER_ERRORS = (
@@ -68,6 +74,7 @@ Examples:
   triage add https://github.com/vorssaint/vorssaint-utils
   triage add vorssaint/vorssaint-utils --limit 25
   triage sync
+  triage run vorssaint/vorssaint-utils
   triage list
   triage remove vorssaint/vorssaint-utils
 
@@ -99,6 +106,24 @@ Examples:
   triage sync                           # every tracked repository
   triage sync vorssaint/vorssaint-utils
   triage sync --comments 5
+"""
+
+_HOT_RULE = (
+    f"top {facts.HOT_FRACTION:.0%} of open issues by reactions plus comments, "
+    f"minimum {facts.HOT_MIN_ENGAGEMENT}"
+)
+
+_RUN_EPILOG = f"""\
+Flags:
+  stale  no new issue or comment from a person in --stale-days days; bot
+         comments and label edits don't count
+  hot    {_HOT_RULE}
+
+Tags from the model (bug, enhancement, ...) come in a later version.
+
+Examples:
+  triage run vorssaint/vorssaint-utils
+  triage run vorssaint/vorssaint-utils --stale-days 90
 """
 
 _LIST_EPILOG = """\
@@ -344,6 +369,26 @@ def _build_parser() -> help_format.Parser:
     )
     sync.set_defaults(handler=_run_sync)
 
+    run = _add_command(
+        commands,
+        "run",
+        summary="Flag a tracked repository's open issues",
+        usage="%(prog)s [options] <repo>",
+        description="Flag the stored open issues of a tracked repository "
+        "and print them.\nRun triage sync first to work on fresh data.",
+        epilog=_RUN_EPILOG,
+    )
+    run.add_argument("repo", metavar="<repo>", help="GitHub link or owner/name")
+    run.add_argument(
+        "--stale-days",
+        type=_positive_int,
+        metavar="<n>",
+        default=facts.DEFAULT_STALE_DAYS,
+        help="Days without human activity before an issue is stale "
+        "(default: %(default)s)",
+    )
+    run.set_defaults(handler=_run_triage)
+
     list_command = _add_command(
         commands,
         "list",
@@ -529,6 +574,82 @@ def _describe_sync(
     return f"{name} · {summary} · {fetch.total_open} open on GitHub"
 
 
+def _positive_int(text: str) -> int:
+    """Parses a command-line number that must be 1 or more."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {text}") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be 1 or more, got {value}")
+    return value
+
+
+def _run_triage(args: argparse.Namespace) -> None:
+    """Prints a tracked repository's open issues with their flags."""
+    requested = repo_ref.parse(args.repo)
+    data_dir: pathlib.Path = args.data_dir
+    path = data_dir / requested.db_filename
+    if not path.exists():
+        raise NotTrackedError(
+            f"{requested.full_name} is not tracked. Add it with: "
+            f"triage add {requested.full_name}"
+        )
+    connection = store.connect(path)
+    try:
+        name = connection.execute(
+            "SELECT name_with_owner FROM repository"
+        ).fetchone()[0]
+        issues = loader.load_open_issues(connection)
+    finally:
+        connection.close()
+
+    if not issues:
+        print(f"{name} · no open issues stored")
+        return
+    results = facts.compute(
+        issues,
+        now=datetime.datetime.now(datetime.timezone.utc),
+        stale_days=args.stale_days,
+    )
+    counts = [
+        f"{sum(flag in result.flags for result in results)} {flag.value}"
+        for flag in (taxonomy.Flag.STALE, taxonomy.Flag.HOT)
+    ]
+    print(f"{name} · {len(results)} open issues · " + " · ".join(counts))
+    rows = [("ISSUE", "FLAGS", "IDLE", "ENGAGEMENT", "TITLE")]
+    for result in results:
+        rows.append(
+            (
+                f"#{result.issue.number}",
+                ", ".join(flag.value for flag in result.flags) or "-",
+                f"{result.idle_days}d",
+                str(result.engagement),
+                _shorten(result.issue.title, TITLE_WIDTH),
+            )
+        )
+    _print_table(rows)
+
+
+def _shorten(text: str, width: int) -> str:
+    """Cuts text to ``width`` characters, ending with "..." if cut."""
+    return text if len(text) <= width else text[: width - 3] + "..."
+
+
+def _print_table(rows: Sequence[Sequence[str]]) -> None:
+    """Prints rows as left-aligned columns, the first row as the header."""
+    widths = [
+        max(len(row[column]) for row in rows) for column in range(len(rows[0]))
+    ]
+    for row in rows:
+        print(
+            "  ".join(
+                cell.ljust(width)
+                for cell, width in zip(row, widths, strict=True)
+            ).rstrip()
+        )
+
+
 def _run_list(args: argparse.Namespace) -> None:
     """Prints every tracked repository and when it was last synced."""
     data_dir: pathlib.Path = args.data_dir
@@ -551,14 +672,7 @@ def _run_list(args: argparse.Namespace) -> None:
                 timefmt.local_display(summary.last_synced_at),
             )
         )
-    widths = [max(len(row[column]) for row in rows) for column in range(4)]
-    for row in rows:
-        print(
-            "  ".join(
-                cell.ljust(width)
-                for cell, width in zip(row, widths, strict=True)
-            )
-        )
+    _print_table(rows)
 
 
 def _run_remove(args: argparse.Namespace) -> None:

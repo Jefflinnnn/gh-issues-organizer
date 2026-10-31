@@ -236,6 +236,46 @@ def test_sync_with_nothing_tracked_points_to_add(
 
 
 @pytest.mark.usefixtures("tracked")
+def test_run_prints_each_open_issue_with_its_flags(
+    triage: Triage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert triage("run", "vorssaint/vorssaint-utils") == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("vorssaint/vorssaint-utils · 3 open issues")
+    assert lines[0].endswith("· 1 hot")
+    assert lines[1].split() == [
+        "ISSUE",
+        "FLAGS",
+        "IDLE",
+        "ENGAGEMENT",
+        "TITLE",
+    ]
+    rows = {line.split()[0]: line for line in lines[2:]}
+    assert set(rows) == {"#3267", "#3668", "#3678"}
+    assert "hot" in rows["#3267"]
+    assert "hot" not in rows["#3668"]
+
+
+@pytest.mark.usefixtures("tracked")
+def test_run_rejects_a_stale_window_below_one(
+    triage: Triage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        triage("run", "vorssaint/vorssaint-utils", "--stale-days", "0")
+
+    assert exit_info.value.code == 2
+    assert "must be 1 or more" in capsys.readouterr().err
+
+
+def test_run_of_an_untracked_repo_points_to_add(
+    triage: Triage, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert triage("run", "vorssaint/vorssaint-utils") == 1
+    assert "triage add vorssaint/vorssaint-utils" in caplog.text
+
+
+@pytest.mark.usefixtures("tracked")
 def test_sync_carries_on_after_one_repository_fails(
     triage: Triage,
     tmp_path: pathlib.Path,
