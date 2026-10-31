@@ -2,7 +2,8 @@
 
 `triage` is a command-line tool for maintainers facing a long list of open
 GitHub issues. This first version tracks a repository and stores its open
-issues in a local SQLite file. Tagging and the triage report come later.
+issues in a local SQLite file, then flags the ones that are stale or getting
+attention. Tags from a language model come later.
 
 ## Requirements
 
@@ -109,6 +110,37 @@ often as you like, and a run with no changes costs one request. Issues that
 were already open when you ran `add` but are older than its `--limit` are not
 back-filled.
 
+Flag a tracked repository's stored open issues:
+
+```bash
+triage run vorssaint/vorssaint-utils
+```
+
+```
+vorssaint/vorssaint-utils · 3 open issues · 0 stale · 1 hot
+ISSUE  FLAGS  IDLE  ENGAGEMENT  TITLE
+#3267  hot    1d    5           Network module: add connectivity history and interface st...
+#3668  -      1d    1           Dynamic Island Hermes Agent
+#3678  -      1d    0           Add Cursor to AI agents view
+```
+
+`run` works on the cache, so run `triage sync` first for fresh data. It
+computes two flags each time:
+
+- **stale**: no new issue or comment from a person in 60 days. Bot comments
+  and label edits don't reset the clock. Change the window with
+  `--stale-days`:
+
+  ```bash
+  triage run vorssaint/vorssaint-utils --stale-days 90
+  ```
+- **hot**: in the top 10% of the repository's open issues by reactions plus
+  comments, with at least 3.
+
+`IDLE` is days since the last human activity; `ENGAGEMENT` is reactions plus
+comments. The cache keeps only each issue's latest comments, so if those are
+all from bots, the issue counts as idle since it was opened.
+
 Show tracked repositories:
 
 ```bash
@@ -138,22 +170,27 @@ Options:
 | --- | --- | --- |
 | `--limit N` (add) | 10 | Open issues to fetch, 1 to 100 |
 | `--comments N` (add, sync) | 3 | Latest comments kept per fetched issue |
+| `--stale-days N` (run) | 60 | Days without human activity before an issue is stale |
 | `--yes` (remove) | off | Delete without asking |
 | `--data-dir PATH` | `.cache` | Folder holding the cache files |
 | `-v` | off | Show debug logs |
 
 Each tracked repository gets one SQLite file in `.cache/`, for example
 `.cache/vorssaint__vorssaint-utils.db`. The tool creates the file and its
-tables on first use; nothing needs setting up. Git ignores `.cache/`.
+tables on first use, and upgrades files written by an older version in place;
+nothing needs setting up. Git ignores `.cache/`.
 
 ## Tab completion
 
-`triage setup` offers Tab completion. If you skipped it, turn it on any
-time; it asks before editing your startup file:
+`triage setup` offers Tab completion. If you skipped it, run setup again;
+it skips finished steps and asks before editing your startup file:
 
 ```bash
-triage completion install
+triage setup
 ```
+
+Setup reads your shell from `$SHELL`. To pick one yourself, pass
+`--shell zsh` or `--shell bash`.
 
 Or add the line to `~/.zshrc` (or `~/.bashrc` with `bash`) yourself:
 
@@ -162,11 +199,11 @@ eval "$(triage completion zsh)"
 ```
 
 Completion works in zsh and bash; open a new terminal after setting it up.
-Press Tab after `triage ` to complete a command, or after `triage remove `
-or `triage sync ` to complete a tracked repository's name. Press Tab again to cycle through
-the matches; in bash, cycling needs `bind 'TAB:menu-complete'`. Completion
-lists the repositories tracked in the current folder, the same ones
-`triage list --names` prints.
+Press Tab after `triage ` to complete a command, or after `triage remove `,
+`triage sync ` or `triage run ` to complete a tracked repository's name.
+Press Tab again to cycle through the matches; in bash, cycling needs
+`bind 'TAB:menu-complete'`. Completion lists the repositories tracked in the
+current folder, the same ones `triage list --names` prints.
 
 ## Troubleshooting
 
@@ -176,6 +213,7 @@ lists the repositories tracked in the current folder, the same ones
 | `GitHub rejected the token (HTTP 401)` | The token is mistyped or expired; generate a new one. |
 | `Repository ... not found` | Check the spelling. Private repos need a token with access to them. |
 | `... is already tracked` | The repository already has a cache file; see `triage list`. |
+| `... was written by a newer version of triage` | Update the tool: run `git pull` in the project folder. |
 
 ## Development
 

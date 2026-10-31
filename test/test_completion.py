@@ -99,9 +99,11 @@ bash_only = pytest.mark.skipif(
     [
         (
             ["triage", ""],
-            ["setup", "add", "sync", "list", "remove", "completion"],
+            ["setup", "add", "sync", "run", "list", "remove"],
         ),
         (["triage", "re"], ["remove"]),
+        (["triage", "ru"], ["run"]),
+        (["triage", "run", "vor"], ["vorssaint/vorssaint-utils"]),
         (["triage", "remove", ""], TRACKED),
         (["triage", "sync", ""], TRACKED),
         (["triage", "sync", "vor"], ["vorssaint/vorssaint-utils"]),

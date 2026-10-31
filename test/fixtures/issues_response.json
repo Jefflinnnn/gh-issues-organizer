@@ -24,7 +24,8 @@
             "updatedAt": "2026-10-30T04:43:23Z",
             "closedAt": null,
             "author": {
-              "login": "leontievilya"
+              "login": "leontievilya",
+              "__typename": "User"
             },
             "authorAssociation": "NONE",
             "labels": {
@@ -46,7 +47,8 @@
                 {
                   "id": "IC_kwDOS4xLO88AAAABeeMBdg",
                   "author": {
-                    "login": "shu-vro"
+                    "login": "shu-vro",
+                    "__typename": "User"
                   },
                   "authorAssociation": "NONE",
                   "createdAt": "2026-10-22T11:42:41Z",
@@ -55,7 +57,8 @@
                 {
                   "id": "IC_kwDOS4xLO88AAAABhFWJSQ",
                   "author": {
-                    "login": "Psylar87"
+                    "login": "Psylar87",
+                    "__typename": "User"
                   },
                   "authorAssociation": "NONE",
                   "createdAt": "2026-10-30T04:43:23Z",
@@ -76,7 +79,8 @@
             "updatedAt": "2026-10-30T03:07:15Z",
             "closedAt": null,
             "author": {
-              "login": "JettMath"
+              "login": "JettMath",
+              "__typename": "User"
             },
             "authorAssociation": "NONE",
             "labels": {
@@ -98,7 +102,8 @@
                 {
                   "id": "IC_kwDOS4xLO88AAAABhEM5zA",
                   "author": {
-                    "login": "mario872"
+                    "login": "mario872",
+                    "__typename": "User"
                   },
                   "authorAssociation": "NONE",
                   "createdAt": "2026-10-30T03:07:14Z",
@@ -119,7 +124,8 @@
             "updatedAt": "2026-10-30T02:34:37Z",
             "closedAt": null,
             "author": {
-              "login": "KrishMay05"
+              "login": "KrishMay05",
+              "__typename": "User"
             },
             "authorAssociation": "NONE",
             "labels": {
